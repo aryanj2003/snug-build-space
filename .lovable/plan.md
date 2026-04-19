@@ -1,46 +1,73 @@
 
 
-# Aegis Intake — MVP Build Plan
+The user wants to improve agent consistency. ElevenLabs "Workflows" (subagents/conditional flows) is the right fit — it lets you script the intake as a deterministic state machine rather than relying on a single freeform prompt.
 
-A voice-first dispute intake app that turns a phone call into a structured, classified, routed case in under 60 seconds.
+Two things I can help with:
+1. **Configure the Workflow inside ElevenLabs** (done in their dashboard, not in code)
+2. **Adapt our app** so the client tools and finalize step still work cleanly with a workflow-driven agent
 
-## What I'll build
+## Plan
 
-**Backend (Lovable Cloud)**
-- Postgres schema: `cases`, `vendor_registry`, `routing_rules`, `audit_events` with the enums and indexes from the spec
-- Seed data: 5 vendors (Visa TC40, VROL, MC SAFE, Chargeback911, Internal Ops) + 4 routing rules
-- RLS: anonymous sessions, users only read their own cases
-- Edge functions:
-  - `elevenlabs-token` — server-mints short-lived conversation tokens (keeps API key off client)
-  - `classify` — Lovable AI Gateway, JSON-schema-constrained output → `{dispute_reason, confidence}`
-  - `score-completeness` — checks required + conditional fields → `{score, missing_fields}`
-  - `route` — pure deterministic SQL/JS (filter → first-match rule → tiebreaker scorer), returns `rule_id` + `scored_alternatives`
-  - `commit-case` — writes case + hash-chained audit events
-  - `verify-chain` — recomputes sha256 chain, returns `{valid}`
+### 1. Workflow design (do this in the ElevenLabs dashboard)
 
-**Frontend (single page)**
-- Anonymous Supabase sign-in on load
-- **Left 60%**: big "Start Call" button → live transcript stream (WebRTC via `@elevenlabs/react` `useConversation`)
-- **Right 40%**: "Live Case" card — fields animate in as captured, classification badge with confidence %, completeness progress bar, routed destination
-- **Bottom drawer**: collapsible audit trail with timestamps and truncated hashes, plus a "Verify chain" button
-- 3 client tools wired to the agent: `capture_field`, `mark_dispute_reason`, `finalize_intake`
-- On finalize: runs classify → score → route → commit-case in sequence, renders result
+Create a Workflow on the agent with these nodes, each as a separate sub-agent with a tight prompt:
 
-**Security (lightweight, per spec §11)**
-- `redact()` util masks card numbers, emails, phones before any log/audit write
-- Hash-chained audit events (sha256 of canonical JSON + prev_hash)
-- ElevenLabs key stays server-side
-- RLS on `cases` and `audit_events`
+```text
+[Start]
+   ↓
+[Greet & get name]      → tool: capture_field(customer_name)
+   ↓
+[Get card network]      → tool: capture_field(network)   [VISA/MC/AMEX/DISCOVER]
+   ↓
+[Get amount + currency] → tool: capture_field(amount_cents, currency)
+   ↓
+[Get merchant]          → tool: capture_field(merchant)
+   ↓
+[Get transaction date]  → tool: capture_field(transaction_date)
+   ↓
+[Get last4]             → tool: capture_field(last4)
+   ↓
+[Get contact phone]     → tool: capture_field(customer_contact_masked)
+   ↓
+[Classify reason]       → tool: mark_dispute_reason(reason, confidence)
+   ↓
+[Confirm summary]       ── user disagrees → loop back to relevant node
+   ↓ user confirms
+[Finalize]              → tool: finalize_intake()
+   ↓
+[End]
+```
 
-**Demo target**: VISA, unauthorized, $847 → routes to `V01` with reason code `10.4`, ≥6 audit events with valid chain.
+Per-node prompt rules to enforce:
+- One question per turn, max ~15 words
+- If user gives multiple fields at once, capture all then advance
+- Never invent values — if unclear, re-ask once then move on
+- Edge transitions: "user_confirmed", "user_corrected", "user_unsure"
 
-## What I won't build (out of scope per spec)
-Human agent dashboards, real Visa API, Stripe, marketing site, Vanta or any compliance vendor, adjudication/refunds.
+### 2. Tool schemas to register in the dashboard
 
-## Setup notes after approval
-1. Lovable Cloud will be enabled automatically and the migration runs on first deploy.
-2. The "Start Call" button will show a friendly "Add ElevenLabs credentials to enable voice" state until you provide:
-   - `ELEVENLABS_API_KEY` (Cloud secret)
-   - `VITE_ELEVENLABS_AGENT_ID` (env var, with the system prompt + 3 client tools configured in the ElevenLabs dashboard per spec §6)
-3. Everything else (routing engine, classifier, audit chain, UI, verify-chain) will be fully working and demoable end-to-end with a "Simulate call" fallback that injects the Sarah/$847 transcript so you can verify the V01 + 10.4 acceptance criterion before plugging in voice.
+Make sure each client tool has a strict JSON schema so the LLM can't drift:
+
+- `capture_field(field: enum[customer_name,network,amount_cents,currency,merchant,transaction_date,last4,customer_contact_masked,description], value: string|number)`
+- `mark_dispute_reason(reason: enum[unauthorized,duplicate,not_received,defective,cancelled_recurring,incorrect_amount,other], confidence: number 0-1)`
+- `finalize_intake()` — no params
+
+### 3. Code changes (small)
+
+**`src/routes/index.tsx`** — harden the client-tool handlers so a workflow agent can't break the UI:
+- `capture_field`: coerce `amount_cents` to integer, normalize `network`/`currency` to uppercase, validate `transaction_date` as ISO date, ignore unknown field names (return `"unknown_field"` instead of writing junk into the draft)
+- `mark_dispute_reason`: validate against the `DisputeReason` enum, clamp confidence to [0,1]
+- `finalize_intake`: guard against double-finalize (already finalizing → return `"already_finalizing"`)
+
+**`src/lib/aegis/types.ts`** — export a `DISPUTE_REASONS` and `CAPTURE_FIELDS` const array so the validation in step above stays in sync with the type.
+
+**New: `src/lib/aegis/agentSchema.ts`** — exports the JSON-schema definitions for the 3 client tools as a copy-pasteable block, plus a one-page `AGENT_SETUP.md` with the workflow node prompts. This gives you a single source of truth to paste into the ElevenLabs dashboard.
+
+### 4. What I won't do
+- I can't create the workflow inside ElevenLabs for you — that's a dashboard action. I'll give you the exact prompts and tool schemas to paste in.
+- No backend/schema changes needed; the existing `capture_field` / `mark_dispute_reason` / `finalize_intake` contract already fits a workflow agent.
+
+### Tech notes
+- The `useConversation` hook is workflow-agnostic — the WebSocket transport we're already using works for workflow agents the same way.
+- Hardening the tool handlers is the highest-leverage change: most "inconsistency" complaints come from the model passing slightly wrong field names or string amounts that silently corrupt the draft.
 
