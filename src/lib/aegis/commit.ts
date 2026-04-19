@@ -125,7 +125,7 @@ export async function commitCase(input: CommitInput): Promise<CommitOutput> {
     prevHash = hash;
   }
 
-  const { error: evErr } = await supabase.from("audit_events").insert(rows);
+  const { error: evErr } = await supabase.from("audit_events").insert(rows as never);
   if (evErr) throw new Error(evErr.message);
 
   return { case_id: caseId, audit_count: rows.length };
