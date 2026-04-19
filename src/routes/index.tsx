@@ -69,13 +69,14 @@ function IntakePage() {
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [hasCredentials, setHasCredentials] = useState(false);
   const [agentId, setAgentId] = useState<string | null>(null);
+  const [voiceToken, setVoiceToken] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
 
   const fieldEventsRef = useRef<FieldEvent[]>([]);
   const draftRef = useRef<CaseDraft>({});
   const transcriptTextRef = useRef<string>("");
 
-  // Anonymous sign-in on load + check credentials
+  // Anonymous sign-in on load + prefetch voice token
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -84,16 +85,23 @@ function IntakePage() {
         if (!cancelled) setAuthReady(true);
       } catch (e) {
         console.error("Anonymous sign-in failed", e);
-        toast.error("Could not start a demo session");
+        toast.error("Could not start a demo session", {
+          description: e instanceof Error ? e.message : String(e),
+        });
       }
       try {
         const tok = await getElevenLabsToken();
         if (!cancelled) {
           setHasCredentials(Boolean(tok.token && tok.agentId));
           setAgentId(tok.agentId ?? null);
+          setVoiceToken(tok.token ?? null);
         }
-      } catch {
-        if (!cancelled) setHasCredentials(false);
+      } catch (e) {
+        if (!cancelled) {
+          setHasCredentials(false);
+          setVoiceToken(null);
+          console.error("ElevenLabs token prefetch failed", e);
+        }
       }
     })();
     return () => {
@@ -129,7 +137,6 @@ function IntakePage() {
     try {
       const transcriptText = transcriptTextRef.current.trim() || "No transcript captured.";
 
-      // 1. classify (server function via AI gateway)
       let classify: ClassifyResult;
       if (draftRef.current.dispute_reason) {
         classify = {
@@ -142,11 +149,9 @@ function IntakePage() {
       setClassification(classify);
       captureField({ dispute_reason: classify.dispute_reason });
 
-      // 2. completeness
       const comp = scoreCompleteness({ ...draftRef.current, dispute_reason: classify.dispute_reason });
       setCompleteness(comp);
 
-      // 3. route — load vendors + rules
       const [vRes, rRes] = await Promise.all([
         supabase.from("vendor_registry").select("*").eq("active", true),
         supabase.from("routing_rules").select("*").eq("active", true),
@@ -160,7 +165,6 @@ function IntakePage() {
       );
       setRouting(decision);
 
-      // 4. commit
       const commit = await commitCase({
         draft: { ...draftRef.current, dispute_reason: classify.dispute_reason },
         classification: { dispute_reason: classify.dispute_reason, confidence: classify.confidence },
@@ -171,7 +175,6 @@ function IntakePage() {
       });
       setCaseId(commit.case_id);
 
-      // 5. load audit events
       const { data: events } = await supabase
         .from("audit_events")
         .select("seq,event_type,payload,prev_hash,hash,created_at")
@@ -190,7 +193,6 @@ function IntakePage() {
     }
   }, [captureField]);
 
-  // ===== ElevenLabs voice integration =====
   const conversation = useConversation({
     clientTools: {
       capture_field: (params: { field: string; value: unknown }) => {
@@ -209,15 +211,20 @@ function IntakePage() {
         return "finalizing";
       },
     },
+    onConnect: () => {
+      setStatus("live");
+    },
     onMessage: (m: { source?: string; message?: string; type?: string }) => {
       if (m && typeof m.message === "string") {
         const speaker: "agent" | "user" = m.source === "user" ? "user" : "agent";
         appendTranscript(speaker, m.message);
       }
     },
-    onError: (err) => {
-      console.error("convai error", err);
-      toast.error("Voice connection error");
+    onError: (message, err) => {
+      console.error("convai error", message, err);
+      toast.error("Voice connection error", {
+        description: typeof message === "string" ? message : err instanceof Error ? err.message : "Session failed to start",
+      });
       setStatus("idle");
     },
     onDisconnect: () => {
@@ -226,26 +233,32 @@ function IntakePage() {
   });
 
   const startVoice = useCallback(async () => {
-    if (!hasCredentials || !agentId) return;
-    setStatus("connecting");
+    if (!hasCredentials || !agentId || !voiceToken) {
+      toast.error("Voice not configured", {
+        description: "Missing a valid agent ID or conversation token.",
+      });
+      return;
+    }
+
     resetSession();
+    setStatus("connecting");
+
     try {
-      await navigator.mediaDevices.getUserMedia({ audio: true });
-      const tok = await getElevenLabsToken();
-      if (!tok.token) throw new Error(tok.error ?? "No token");
-      await conversation.startSession({
-        conversationToken: tok.token,
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((track) => track.stop());
+
+      conversation.startSession({
+        conversationToken: voiceToken,
         connectionType: "webrtc",
       });
-      setStatus("live");
     } catch (e) {
-      console.error(e);
+      console.error("start voice failed", e);
       toast.error("Could not start voice", {
         description: e instanceof Error ? e.message : String(e),
       });
       setStatus("idle");
     }
-  }, [agentId, conversation, hasCredentials]);
+  }, [agentId, conversation, hasCredentials, voiceToken]);
 
   const stopVoice = useCallback(async () => {
     try {
@@ -255,7 +268,6 @@ function IntakePage() {
     }
   }, [conversation, finalize]);
 
-  // ===== Simulated call =====
   const simTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelSim = () => {
     if (simTimerRef.current) clearTimeout(simTimerRef.current);
@@ -298,7 +310,6 @@ function IntakePage() {
 
   useEffect(() => () => cancelSim(), []);
 
-  // Live completeness preview (during call)
   useEffect(() => {
     if (status === "live") setCompleteness(scoreCompleteness(draft));
   }, [draft, status]);
