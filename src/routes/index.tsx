@@ -264,17 +264,35 @@ function IntakePage() {
   const conversation = useConversation({
     clientTools: {
       capture_field: (params: { field: string; value: unknown }) => {
-        captureField({ [params.field]: params.value } as Partial<CaseDraft>);
+        const field = String(params?.field ?? "").trim();
+        if (!CAPTURE_FIELD_SET.has(field)) {
+          console.warn("capture_field: unknown field", field);
+          return "unknown_field";
+        }
+        const result = coerceFieldValue(field as CaptureField, params?.value);
+        if (!result.ok) {
+          console.warn("capture_field: invalid value", field, params?.value, result.reason);
+          return `invalid:${result.reason}`;
+        }
+        captureField({ [field]: result.value } as Partial<CaseDraft>);
         return "ok";
       },
-      mark_dispute_reason: (params: { reason: DisputeReason; confidence?: number }) => {
+      mark_dispute_reason: (params: { reason: string; confidence?: number }) => {
+        const reason = String(params?.reason ?? "").trim().toLowerCase();
+        if (!DISPUTE_REASON_SET.has(reason)) {
+          console.warn("mark_dispute_reason: unknown reason", reason);
+          return "unknown_reason";
+        }
+        const rawConf = typeof params?.confidence === "number" ? params.confidence : 0.85;
+        const confidence = Math.max(0, Math.min(1, rawConf));
         captureField({
-          dispute_reason: params.reason,
-          classification_confidence: params.confidence ?? 0.85,
+          dispute_reason: reason as DisputeReason,
+          classification_confidence: confidence,
         });
         return "ok";
       },
       finalize_intake: () => {
+        if (finalizingRef.current) return "already_finalizing";
         void finalize();
         return "finalizing";
       },
