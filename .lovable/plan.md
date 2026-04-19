@@ -1,73 +1,87 @@
 
 
-The user wants to improve agent consistency. ElevenLabs "Workflows" (subagents/conditional flows) is the right fit — it lets you script the intake as a deterministic state machine rather than relying on a single freeform prompt.
+## Aegis Voice — Enterprise Fintech Dashboard Redesign
 
-Two things I can help with:
-1. **Configure the Workflow inside ElevenLabs** (done in their dashboard, not in code)
-2. **Adapt our app** so the client tools and finalize step still work cleanly with a workflow-driven agent
+A complete visual + structural redesign of the existing intake page into a high-end "Industrial" 3-column console, with a Legacy Mode toggle that swaps the entire shell into a Windows 95 aesthetic.
 
-## Plan
+### Approach
 
-### 1. Workflow design (do this in the ElevenLabs dashboard)
+Keep all existing backend logic (ElevenLabs voice, capture handlers, classify/route/commit pipeline, audit trail) **untouched**. Only the presentation layer changes. The current data flow already produces everything we need:
+- `transcript` lines → Live Call Stream
+- `draft` + `classification` → Extraction Ledger
+- `routing` + final draft → JSON output + Routing Engine
+- `caseId` + `finalize` → "VALIDATE & ROUTE DISPUTE" button
 
-Create a Workflow on the agent with these nodes, each as a separate sub-agent with a tight prompt:
+### Visual system (`src/styles.css`)
+
+Switch dark theme to Slate-950 / Cyan-400 / Emerald-500 / Amber-500. Add Inter (UI) + JetBrains Mono (data/code) via `@import` from Google Fonts in `index.html`. Add `font-mono` utility wired to JetBrains Mono. Keep existing semantic tokens — only retune values so all components inherit the new look.
+
+New keyframes: `pulse-dot` (header status), `caret-blink` (transcript caret), `scan-line` (subtle grid overlay).
+
+### Component structure
 
 ```text
-[Start]
-   ↓
-[Greet & get name]      → tool: capture_field(customer_name)
-   ↓
-[Get card network]      → tool: capture_field(network)   [VISA/MC/AMEX/DISCOVER]
-   ↓
-[Get amount + currency] → tool: capture_field(amount_cents, currency)
-   ↓
-[Get merchant]          → tool: capture_field(merchant)
-   ↓
-[Get transaction date]  → tool: capture_field(transaction_date)
-   ↓
-[Get last4]             → tool: capture_field(last4)
-   ↓
-[Get contact phone]     → tool: capture_field(customer_contact_masked)
-   ↓
-[Classify reason]       → tool: mark_dispute_reason(reason, confidence)
-   ↓
-[Confirm summary]       ── user disagrees → loop back to relevant node
-   ↓ user confirms
-[Finalize]              → tool: finalize_intake()
-   ↓
-[End]
+src/routes/index.tsx          (orchestrator — keep voice/finalize logic, swap layout)
+src/components/aegis/
+  Header.tsx                  NEW — slim bar, pulsing cyan dot, Legacy toggle
+  Waveform.tsx                NEW — canvas-based cyan waveform from mic analyser
+  CallStream.tsx              NEW — wraps Waveform + scrolling mono transcript w/ keyword highlight
+  EnforcementLedger.tsx       NEW — table (Field/Value/Source/Status) + radial confidence gauge
+  SystemOutput.tsx            NEW — ISO-20022 JSON block + routing diagram + VALIDATE button
+  LegacyShell.tsx             NEW — Win95 reskin reading the same state
+  TraceContext.tsx            NEW — React context for hover-to-highlight (ledger ↔ transcript)
 ```
 
-Per-node prompt rules to enforce:
-- One question per turn, max ~15 words
-- If user gives multiple fields at once, capture all then advance
-- Never invent values — if unclear, re-ask once then move on
-- Edge transitions: "user_confirmed", "user_corrected", "user_unsure"
+Existing `CallControl`, `LiveCaseCard`, `AuditTrail`, `Transcript` components stay in the repo (used as fallbacks / inside the new components where useful) but the index route stops importing the old layout cards.
 
-### 2. Tool schemas to register in the dashboard
+### Key interactions
 
-Make sure each client tool has a strict JSON schema so the LLM can't drift:
+1. **Trace Effect** — `TraceContext` stores `hoveredField`. Ledger rows set it on `onMouseEnter`. Each transcript line checks if its text contains the captured value for that field and applies a cyan highlight + ring. Field→keyword map: `amount_cents`→formatted currency, `merchant`→merchant string, `dispute_reason`→keywords like "wasn't me", "fraud", "didn't authorize".
 
-- `capture_field(field: enum[customer_name,network,amount_cents,currency,merchant,transaction_date,last4,customer_contact_masked,description], value: string|number)`
-- `mark_dispute_reason(reason: enum[unauthorized,duplicate,not_received,defective,cancelled_recurring,incorrect_amount,other], confidence: number 0-1)`
-- `finalize_intake()` — no params
+2. **Static keyword highlight** — Always highlight `$xxx`, "gas station", "wasn't me" in cyan via a small `highlightKeywords(text)` util that returns React nodes.
 
-### 3. Code changes (small)
+3. **Waveform** — When `status==="live"` and we have mic access, tap `MediaStream` from `getUserMedia` (already requested in `startVoice`) into a `Web Audio API` `AnalyserNode` and draw bars on canvas at 60fps. Pre-call: idle sine shimmer.
 
-**`src/routes/index.tsx`** — harden the client-tool handlers so a workflow agent can't break the UI:
-- `capture_field`: coerce `amount_cents` to integer, normalize `network`/`currency` to uppercase, validate `transaction_date` as ISO date, ignore unknown field names (return `"unknown_field"` instead of writing junk into the draft)
-- `mark_dispute_reason`: validate against the `DisputeReason` enum, clamp confidence to [0,1]
-- `finalize_intake`: guard against double-finalize (already finalizing → return `"already_finalizing"`)
+4. **Confidence gauge** — SVG circle, `stroke-dashoffset` animated via framer-motion spring, shows `classification.confidence * 100` (or pre-classify draft confidence).
 
-**`src/lib/aegis/types.ts`** — export a `DISPUTE_REASONS` and `CAPTURE_FIELDS` const array so the validation in step above stays in sync with the type.
+5. **JSON block** — Build ISO-20022 `CustomerPaymentReversalRequest`-shaped object live from `draft` + `classification` + `routing`. Render with a tiny inline syntax highlighter (regex-based: keys cyan, strings emerald, numbers amber). framer-motion `AnimatePresence` per line as fields populate.
 
-**New: `src/lib/aegis/agentSchema.ts`** — exports the JSON-schema definitions for the 3 client tools as a copy-pasteable block, plus a one-page `AGENT_SETUP.md` with the workflow node prompts. This gives you a single source of truth to paste into the ElevenLabs dashboard.
+6. **Routing diagram** — Three pill nodes (`INTAKE → AEGIS → PEGA`) connected by animated cyan dashes. Active node pulses based on pipeline stage (`status`/`caseId`/`routing`).
 
-### 4. What I won't do
-- I can't create the workflow inside ElevenLabs for you — that's a dashboard action. I'll give you the exact prompts and tool schemas to paste in.
-- No backend/schema changes needed; the existing `capture_field` / `mark_dispute_reason` / `finalize_intake` contract already fits a workflow agent.
+7. **VALIDATE & ROUTE button** — Calls existing `stopVoice()` (which finalizes). Glowing cyan with framer-motion tap/hover springs. Disabled until completeness ≥ threshold.
 
-### Tech notes
-- The `useConversation` hook is workflow-agnostic — the WebSocket transport we're already using works for workflow agents the same way.
-- Hardening the tool handlers is the highest-leverage change: most "inconsistency" complaints come from the model passing slightly wrong field names or string amounts that silently corrupt the draft.
+8. **Legacy Mode toggle** — Boolean state in index route. When `true`, render `<LegacyShell />` instead of the new console — same data, but:
+   - Beige `#c0c0c0` background, `MS Sans Serif` font (system fallback `"Tahoma"`), 3D beveled borders via `border-style: outset/inset`
+   - Title bars in navy with white text
+   - Red `[MISCLASSIFIED]` badges on the ledger, ~half the fields shown as `<MISSING>`
+   - Crappy non-animated "OK" button instead of the glowing CTA
+   - This sells the "before/after" demo narrative
+
+### Animations (framer-motion)
+
+- Ledger rows: `initial={{opacity:0, x:-8}} animate={{opacity:1, x:0}}` spring on capture
+- Status checkmarks: `scale` spring 0→1 with stiffness 300
+- JSON lines: stagger fade-in as keys arrive
+- Mode swap: `AnimatePresence` crossfade between Aegis/Legacy shells
+- Header pulse dot: CSS keyframe (lighter than framer for a 1Hz tick)
+
+### Dependencies
+
+- `framer-motion` — add via dependency manager
+- Fonts: Inter + JetBrains Mono from Google Fonts (`<link>` in `__root.tsx` head)
+- All other deps already present (lucide-react, existing ElevenLabs SDK, etc.)
+
+### Files touched
+
+**New:** `Header.tsx`, `Waveform.tsx`, `CallStream.tsx`, `EnforcementLedger.tsx`, `SystemOutput.tsx`, `LegacyShell.tsx`, `TraceContext.tsx`, `src/lib/aegis/iso20022.ts` (JSON builder), `src/lib/aegis/highlight.tsx` (keyword util)
+
+**Modified:** `src/styles.css` (palette + fonts + keyframes), `src/routes/__root.tsx` (font links), `src/routes/index.tsx` (swap layout, wire TraceContext + Legacy toggle, expose mic stream to Waveform), `package.json` (framer-motion)
+
+**Untouched:** all `src/lib/aegis/*` logic files, `src/server/*`, Supabase schema, ElevenLabs integration, audit trail.
+
+### Out of scope
+
+- No backend/schema changes
+- ElevenLabs workflow consistency (already handled in last turn)
+- AuditTrail component stays as-is below the 3-column console (still useful for the demo)
 
