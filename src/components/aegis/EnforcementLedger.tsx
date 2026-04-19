@@ -141,60 +141,118 @@ export function EnforcementLedger({ draft, classification, completeness, transcr
             </tr>
           </thead>
           <tbody>
+            <SectionRow label="Caller-provided · Transaction fingerprint" />
             <AnimatePresence>
-              {rows.map((r) => {
-                const has = !!r.value;
-                const cite = citation(r);
-                return (
-                  <motion.tr
-                    key={r.field}
-                    layout
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ type: "spring", stiffness: 300, damping: 26 }}
-                    onMouseEnter={() => setHovered(r.field)}
-                    onMouseLeave={() => setHovered(null)}
-                    className="border-b border-border/30 transition-colors hover:bg-primary/5"
-                  >
-                    <td className="px-4 py-2.5">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-primary/70">
-                        {r.category}
-                      </span>
-                      <div className="text-foreground/90">{r.label}</div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {has ? (
-                        <span className="text-foreground">{r.value}</span>
-                      ) : (
-                        <span className="text-muted-foreground/50">&lt;pending&gt;</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">
-                      {cite ?? <span className="text-muted-foreground/50">—</span>}
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      {has ? (
-                        <motion.span
-                          initial={{ scale: 0 }}
-                          animate={{ scale: 1 }}
-                          transition={{ type: "spring", stiffness: 320, damping: 18 }}
-                          className="inline-flex items-center gap-1 text-emerald-400"
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          OK
-                        </motion.span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-muted-foreground/60">
-                          <CircleDashed className="h-3.5 w-3.5" />
-                          —
-                        </span>
-                      )}
-                    </td>
-                  </motion.tr>
-                );
-              })}
+              {callerRows.map((r) => (
+                <LedgerRow
+                  key={r.field}
+                  row={r}
+                  citation={citation(r)}
+                  onHover={setHovered}
+                />
+              ))}
+            </AnimatePresence>
+            <SectionRow label="Resolved from account · Card on file" />
+            <AnimatePresence>
+              {accountRows.map((r) => (
+                <LedgerRow
+                  key={r.field}
+                  row={r}
+                  citation={null}
+                  onHover={setHovered}
+                />
+              ))}
             </AnimatePresence>
           </tbody>
+        </table>
+      </div>
+
+      <div className="border-t border-border/60 p-4">
+        <ConfidenceGauge value={confidence} missing={completeness?.missing_fields.length ?? 0} />
+      </div>
+    </section>
+  );
+}
+
+function SectionRow({ label }: { label: string }) {
+  return (
+    <tr className="border-b border-border/30 bg-slate-950/30">
+      <td colSpan={4} className="px-4 py-1.5 font-mono text-[9px] uppercase tracking-[0.2em] text-primary/60">
+        {label}
+      </td>
+    </tr>
+  );
+}
+
+function LedgerRow({
+  row,
+  citation,
+  onHover,
+}: {
+  row: Row;
+  citation: string | null;
+  onHover: (f: string | null) => void;
+}) {
+  const has = !!row.value;
+  const isAccount = row.source === "ACCOUNT";
+  return (
+    <motion.tr
+      layout
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ type: "spring", stiffness: 300, damping: 26 }}
+      onMouseEnter={() => onHover(row.field)}
+      onMouseLeave={() => onHover(null)}
+      className="border-b border-border/30 transition-colors hover:bg-primary/5"
+    >
+      <td className="px-4 py-2.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-primary/70">
+          {row.category}
+        </span>
+        <div className="text-foreground/90">{row.label}</div>
+      </td>
+      <td className="px-4 py-2.5">
+        {has ? (
+          <span className="text-foreground">{row.value}</span>
+        ) : (
+          <span className="text-muted-foreground/50">&lt;pending&gt;</span>
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-muted-foreground">
+        {isAccount ? (
+          <span className="rounded-sm border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-emerald-400">
+            account lookup
+          </span>
+        ) : citation ? (
+          <span>{citation}</span>
+        ) : has ? (
+          <span className="rounded-sm border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-primary">
+            voice
+          </span>
+        ) : (
+          <span className="text-muted-foreground/50">—</span>
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-right">
+        {has ? (
+          <motion.span
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 320, damping: 18 }}
+            className="inline-flex items-center gap-1 text-emerald-400"
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            OK
+          </motion.span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-muted-foreground/60">
+            <CircleDashed className="h-3.5 w-3.5" />
+            —
+          </span>
+        )}
+      </td>
+    </motion.tr>
+  );
         </table>
       </div>
 
