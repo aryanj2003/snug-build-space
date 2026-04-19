@@ -1,4 +1,4 @@
-import { supabase } from "@/integrations/supabase/client";
+import { publicSupabase } from "./publicSupabase";
 import type { CaseDraft, RouteResult, CompletenessResult, AuditEventInput } from "./types";
 import { redact, redactObject } from "./redact";
 import { computeHash } from "./hashChain";
@@ -18,14 +18,14 @@ export interface CommitOutput {
 }
 
 export async function commitCase(input: CommitInput): Promise<CommitOutput> {
-  const { data: userData, error: userErr } = await supabase.auth.getUser();
+  const { data: userData, error: userErr } = await publicSupabase.auth.getUser();
   if (userErr || !userData.user) throw new Error("Not authenticated");
   const userId = userData.user.id;
 
   const redactedTranscript = redact(input.transcript);
   const redactedDraft: CaseDraft = redactObject(input.draft);
 
-  const { data: caseRow, error: caseErr } = await supabase
+  const { data: caseRow, error: caseErr } = await publicSupabase
     .from("cases")
     .insert({
       user_id: userId,
@@ -55,7 +55,6 @@ export async function commitCase(input: CommitInput): Promise<CommitOutput> {
   if (caseErr || !caseRow) throw new Error(caseErr?.message ?? "Failed to insert case");
   const caseId = caseRow.id as string;
 
-  // Build audit chain
   const events: AuditEventInput[] = [];
   events.push({ seq: 1, event_type: "session_started", payload: { ts: new Date().toISOString() } });
   for (const fe of input.fieldEvents) {
@@ -100,6 +99,7 @@ export async function commitCase(input: CommitInput): Promise<CommitOutput> {
     hash: string;
     created_at: string;
   };
+
   let prevHash: string | null = null;
   const rows: AuditRow[] = [];
   for (const ev of events) {
@@ -125,7 +125,7 @@ export async function commitCase(input: CommitInput): Promise<CommitOutput> {
     prevHash = hash;
   }
 
-  const { error: evErr } = await supabase.from("audit_events").insert(rows as never);
+  const { error: evErr } = await publicSupabase.from("audit_events").insert(rows as never);
   if (evErr) throw new Error(evErr.message);
 
   return { case_id: caseId, audit_count: rows.length };
@@ -134,7 +134,7 @@ export async function commitCase(input: CommitInput): Promise<CommitOutput> {
 export async function verifyChain(
   caseId: string,
 ): Promise<{ valid: boolean; checked: number; brokenAt?: number }> {
-  const { data, error } = await supabase
+  const { data, error } = await publicSupabase
     .from("audit_events")
     .select("seq,event_type,payload,prev_hash,hash,case_id,created_at")
     .eq("case_id", caseId)
