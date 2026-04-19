@@ -17,7 +17,8 @@ interface Row {
   field: string;
   label: string;
   value: string | null;
-  category: "TXN" | "MERCHANT" | "INTENT" | "CHANNEL";
+  category: "TXN" | "MERCHANT" | "INTENT" | "CHANNEL" | "WHEN" | "WHERE";
+  source: "CALLER" | "ACCOUNT";
 }
 
 const REASON_LABEL: Record<string, string> = {
@@ -32,12 +33,13 @@ const REASON_LABEL: Record<string, string> = {
 
 export function EnforcementLedger({ draft, classification, completeness, transcript, startedAt }: Props) {
   const { setHovered } = useTrace();
-  const rows: Row[] = useMemo(() => {
+  const callerRows: Row[] = useMemo(() => {
     return [
       {
         field: "amount_cents",
         label: "Transaction",
         category: "TXN",
+        source: "CALLER",
         value:
           typeof draft.amount_cents === "number"
             ? `$${(draft.amount_cents / 100).toFixed(2)} ${draft.currency ?? "USD"}`
@@ -47,26 +49,61 @@ export function EnforcementLedger({ draft, classification, completeness, transcr
         field: "merchant",
         label: "Merchant",
         category: "MERCHANT",
+        source: "CALLER",
         value: draft.merchant ?? null,
+      },
+      {
+        field: "transaction_date",
+        label: "Date",
+        category: "WHEN",
+        source: "CALLER",
+        value: draft.transaction_date
+          ? draft.approx_time_of_day
+            ? `${draft.transaction_date} (${draft.approx_time_of_day})`
+            : draft.transaction_date
+          : null,
       },
       {
         field: "dispute_reason",
         label: "Intent",
         category: "INTENT",
+        source: "CALLER",
         value: draft.dispute_reason
           ? REASON_LABEL[draft.dispute_reason] ?? draft.dispute_reason
           : classification
             ? REASON_LABEL[classification.dispute_reason] ?? classification.dispute_reason
             : null,
       },
-      {
-        field: "network",
-        label: "Category",
-        category: "CHANNEL",
-        value: draft.network ? `${draft.network} · Card-Present` : null,
-      },
     ];
   }, [draft, classification]);
+
+  const accountRows: Row[] = useMemo(() => {
+    return [
+      {
+        field: "customer_name",
+        label: "Cardholder",
+        category: "MERCHANT",
+        source: "ACCOUNT",
+        value: draft.customer_name ?? null,
+      },
+      {
+        field: "network",
+        label: "Network",
+        category: "CHANNEL",
+        source: "ACCOUNT",
+        value: draft.network ? `${draft.network} · Card-on-file` : null,
+      },
+      {
+        field: "last4",
+        label: "Card ending",
+        category: "CHANNEL",
+        source: "ACCOUNT",
+        value: draft.last4 ? `•••• ${draft.last4}` : null,
+      },
+    ];
+  }, [draft]);
+
+  const rows = useMemo(() => [...callerRows, ...accountRows], [callerRows, accountRows]);
 
   const confidence = classification?.confidence ?? draft.classification_confidence ?? 0.94;
 
@@ -104,58 +141,27 @@ export function EnforcementLedger({ draft, classification, completeness, transcr
             </tr>
           </thead>
           <tbody>
+            <SectionRow label="Caller-provided · Transaction fingerprint" />
             <AnimatePresence>
-              {rows.map((r) => {
-                const has = !!r.value;
-                const cite = citation(r);
-                return (
-                  <motion.tr
-                    key={r.field}
-                    layout
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ type: "spring", stiffness: 300, damping: 26 }}
-                    onMouseEnter={() => setHovered(r.field)}
-                    onMouseLeave={() => setHovered(null)}
-                    className="border-b border-border/30 transition-colors hover:bg-primary/5"
-                  >
-                    <td className="px-4 py-2.5">
-                      <span className="text-[10px] font-semibold uppercase tracking-wider text-primary/70">
-                        {r.category}
-                      </span>
-                      <div className="text-foreground/90">{r.label}</div>
-                    </td>
-                    <td className="px-4 py-2.5">
-                      {has ? (
-                        <span className="text-foreground">{r.value}</span>
-                      ) : (
-                        <span className="text-muted-foreground/50">&lt;pending&gt;</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">
-                      {cite ?? <span className="text-muted-foreground/50">—</span>}
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      {has ? (
-                        <motion.span
-                          initial={{ scale: 0 }}
-                          animate={{ scale: 1 }}
-                          transition={{ type: "spring", stiffness: 320, damping: 18 }}
-                          className="inline-flex items-center gap-1 text-emerald-400"
-                        >
-                          <CheckCircle2 className="h-3.5 w-3.5" />
-                          OK
-                        </motion.span>
-                      ) : (
-                        <span className="inline-flex items-center gap-1 text-muted-foreground/60">
-                          <CircleDashed className="h-3.5 w-3.5" />
-                          —
-                        </span>
-                      )}
-                    </td>
-                  </motion.tr>
-                );
-              })}
+              {callerRows.map((r) => (
+                <LedgerRow
+                  key={r.field}
+                  row={r}
+                  citation={citation(r)}
+                  onHover={setHovered}
+                />
+              ))}
+            </AnimatePresence>
+            <SectionRow label="Resolved from account · Card on file" />
+            <AnimatePresence>
+              {accountRows.map((r) => (
+                <LedgerRow
+                  key={r.field}
+                  row={r}
+                  citation={null}
+                  onHover={setHovered}
+                />
+              ))}
             </AnimatePresence>
           </tbody>
         </table>
@@ -165,6 +171,87 @@ export function EnforcementLedger({ draft, classification, completeness, transcr
         <ConfidenceGauge value={confidence} missing={completeness?.missing_fields.length ?? 0} />
       </div>
     </section>
+  );
+}
+
+function SectionRow({ label }: { label: string }) {
+  return (
+    <tr className="border-b border-border/30 bg-slate-950/30">
+      <td colSpan={4} className="px-4 py-1.5 font-mono text-[9px] uppercase tracking-[0.2em] text-primary/60">
+        {label}
+      </td>
+    </tr>
+  );
+}
+
+function LedgerRow({
+  row,
+  citation,
+  onHover,
+}: {
+  row: Row;
+  citation: string | null;
+  onHover: (f: string | null) => void;
+}) {
+  const has = !!row.value;
+  const isAccount = row.source === "ACCOUNT";
+  return (
+    <motion.tr
+      layout
+      initial={{ opacity: 0, x: -8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ type: "spring", stiffness: 300, damping: 26 }}
+      onMouseEnter={() => onHover(row.field)}
+      onMouseLeave={() => onHover(null)}
+      className="border-b border-border/30 transition-colors hover:bg-primary/5"
+    >
+      <td className="px-4 py-2.5">
+        <span className="text-[10px] font-semibold uppercase tracking-wider text-primary/70">
+          {row.category}
+        </span>
+        <div className="text-foreground/90">{row.label}</div>
+      </td>
+      <td className="px-4 py-2.5">
+        {has ? (
+          <span className="text-foreground">{row.value}</span>
+        ) : (
+          <span className="text-muted-foreground/50">&lt;pending&gt;</span>
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-muted-foreground">
+        {isAccount ? (
+          <span className="rounded-sm border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-emerald-400">
+            account lookup
+          </span>
+        ) : citation ? (
+          <span>{citation}</span>
+        ) : has ? (
+          <span className="rounded-sm border border-primary/30 bg-primary/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-primary">
+            voice
+          </span>
+        ) : (
+          <span className="text-muted-foreground/50">—</span>
+        )}
+      </td>
+      <td className="px-4 py-2.5 text-right">
+        {has ? (
+          <motion.span
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 320, damping: 18 }}
+            className="inline-flex items-center gap-1 text-emerald-400"
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            OK
+          </motion.span>
+        ) : (
+          <span className="inline-flex items-center gap-1 text-muted-foreground/60">
+            <CircleDashed className="h-3.5 w-3.5" />
+            —
+          </span>
+        )}
+      </td>
+    </motion.tr>
   );
 }
 

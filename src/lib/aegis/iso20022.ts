@@ -35,10 +35,15 @@ export function buildIso20022(opts: {
                 Ccy: draft.currency ?? "USD",
               },
               CardTx: {
+                // PAN + Network are resolved from the bank's card-on-file,
+                // never collected from the caller (PII minimization).
                 Ntwk: draft.network ?? null,
                 PAN: draft.last4 ? `************${draft.last4}` : null,
+                PANSrc: draft.last4 ? "ACCOUNT_LOOKUP" : null,
                 MrchntNm: draft.merchant ?? null,
                 TxDt: draft.transaction_date ?? null,
+                TxCity: draft.transaction_city ?? null,
+                TxTimeOfDay: draft.approx_time_of_day ?? null,
               },
             },
             RvslRsnInf: {
@@ -52,7 +57,16 @@ export function buildIso20022(opts: {
           Envlp: {
             AegisIntake: {
               Channel: "VOICE",
-              Protocol: "DETERMINISTIC",
+              Protocol: "DETERMINISTIC_MIN_PII",
+              CallerProvidedFields: [
+                "merchant",
+                "amount_cents",
+                "transaction_date",
+                "transaction_city",
+                "approx_time_of_day",
+                "description",
+              ],
+              AccountResolvedFields: ["customer_name", "network", "last4", "customer_contact_masked"],
               CustomerCtct: draft.customer_contact_masked ?? null,
               CapturedAt: ts,
             },

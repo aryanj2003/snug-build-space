@@ -14,31 +14,44 @@ export const DISPUTE_REASONS = [
 ] as const;
 export type DisputeReason = (typeof DISPUTE_REASONS)[number];
 
+// Minimal-PII intake: caller only provides transaction-fingerprint fields.
+// last4, network, customer_name, customer_contact_masked are resolved from
+// the bank's "card on file" record (simulated) — not collected from the caller.
 export const CAPTURE_FIELDS = [
-  "customer_name",
-  "network",
+  "merchant",
   "amount_cents",
   "currency",
-  "merchant",
   "transaction_date",
+  "transaction_city",
+  "approx_time_of_day",
+  "description",
+  // Legacy fields kept for backward-compat with existing components/agent configs.
+  // The new workflow should NOT prompt for these, but if an older agent still
+  // sends them we accept and store them.
+  "customer_name",
+  "network",
   "last4",
   "customer_contact_masked",
-  "description",
 ] as const;
 export type CaptureField = (typeof CAPTURE_FIELDS)[number];
 
 export type CaseStatus = "intake" | "classified" | "routed" | "committed" | "failed";
 
 export interface CaseDraft {
-  network?: NetworkType;
+  // Caller-provided (transaction fingerprint)
+  merchant?: string;
   amount_cents?: number;
   currency?: string;
-  merchant?: string;
   transaction_date?: string; // ISO date
+  transaction_city?: string;
+  approx_time_of_day?: string; // "morning" | "afternoon" | "evening" | "night"
+  description?: string;
+  // Bank-resolved (from card-on-file lookup, not from the caller)
+  network?: NetworkType;
   last4?: string;
   customer_name?: string;
   customer_contact_masked?: string;
-  description?: string;
+  // Classification
   dispute_reason?: DisputeReason;
   classification_confidence?: number;
   raw_transcript?: string;

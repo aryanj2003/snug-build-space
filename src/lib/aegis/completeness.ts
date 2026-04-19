@@ -1,18 +1,18 @@
 import type { CompletenessResult, CaseDraft } from "./types";
 
+// Minimal-PII required set: transaction fingerprint + classified reason.
+// Card identifiers (last4, network, customer_name) are resolved from the
+// bank's card-on-file record, not collected from the caller, so they are
+// NOT part of the caller-completeness score.
 const REQUIRED: Array<keyof CaseDraft> = [
-  "network",
-  "amount_cents",
   "merchant",
+  "amount_cents",
   "transaction_date",
-  "last4",
-  "customer_name",
   "dispute_reason",
 ];
 
 // Conditional fields: required when reason is set
 const CONDITIONAL_BY_REASON: Partial<Record<NonNullable<CaseDraft["dispute_reason"]>, Array<keyof CaseDraft>>> = {
-  unauthorized: ["customer_contact_masked"],
   product_not_received: ["description"],
   product_not_as_described: ["description"],
   cancelled_recurring: ["description"],
