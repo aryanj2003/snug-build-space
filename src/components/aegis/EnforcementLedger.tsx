@@ -143,22 +143,11 @@ export const EnforcementLedger = memo(function EnforcementLedger({ draft, classi
           <tbody>
             <SectionRow label="Caller-provided · Transaction fingerprint" />
             <AnimatePresence>
-              {callerRows.map((r) => (
+              {rows.map((r) => (
                 <LedgerRow
                   key={r.field}
                   row={r}
                   citation={citation(r)}
-                  onHover={setHovered}
-                />
-              ))}
-            </AnimatePresence>
-            <SectionRow label="Resolved from account · Card on file" />
-            <AnimatePresence>
-              {accountRows.map((r) => (
-                <LedgerRow
-                  key={r.field}
-                  row={r}
-                  citation={null}
                   onHover={setHovered}
                 />
               ))}
