@@ -1,13 +1,27 @@
 // Source of truth for the ElevenLabs agent's client-tool JSON schemas.
 // Paste these into the ElevenLabs dashboard when configuring the workflow agent.
 // Keep this file in sync with the handlers in src/routes/index.tsx.
+//
+// MINIMAL-PII MODE: the agent only collects transaction-fingerprint fields.
+// last4, network, customer_name are resolved server-side from the card on file.
 
-import { CAPTURE_FIELDS, DISPUTE_REASONS, NETWORK_TYPES } from "./types";
+import { DISPUTE_REASONS } from "./types";
+
+// Caller-provided fields only. Bank-resolved fields are intentionally absent.
+const CALLER_FIELDS = [
+  "merchant",
+  "amount_cents",
+  "currency",
+  "transaction_date",
+  "transaction_city",
+  "approx_time_of_day",
+  "description",
+] as const;
 
 export const captureFieldSchema = {
   name: "capture_field",
   description:
-    "Record a single piece of intake information into the live case draft. Call this as soon as the user provides a value.",
+    "Record a single piece of intake information into the live case draft. Call this as soon as the user provides a value. Only collect transaction-fingerprint fields — never card numbers, CVV, expiry, or full PII.",
   parameters: {
     type: "object",
     additionalProperties: false,
@@ -15,16 +29,14 @@ export const captureFieldSchema = {
     properties: {
       field: {
         type: "string",
-        enum: [...CAPTURE_FIELDS],
+        enum: [...CALLER_FIELDS],
         description: "Which field of the case draft to set.",
       },
       value: {
         // ElevenLabs allows oneOf in tool schemas
         oneOf: [{ type: "string" }, { type: "number" }],
         description:
-          "The value. amount_cents must be an integer in cents. network must be one of " +
-          NETWORK_TYPES.join("/") +
-          ". transaction_date must be ISO YYYY-MM-DD.",
+          "The value. amount_cents must be an integer in cents. transaction_date must be ISO YYYY-MM-DD (resolve relative dates like 'yesterday' before calling). approx_time_of_day must be one of: morning, afternoon, evening, night.",
       },
     },
   },
@@ -56,7 +68,7 @@ export const markDisputeReasonSchema = {
 export const finalizeIntakeSchema = {
   name: "finalize_intake",
   description:
-    "Call ONLY after the customer has confirmed the summary. Triggers classification, routing, and case commit.",
+    "Call ONLY after the customer has confirmed the summary. Triggers card-on-file resolution, classification, routing, and case commit.",
   parameters: {
     type: "object",
     additionalProperties: false,
