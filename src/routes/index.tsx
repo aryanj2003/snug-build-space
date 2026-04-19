@@ -199,6 +199,8 @@ function IntakePage() {
   }, []);
 
   const finalize = useCallback(async () => {
+    if (finalizingRef.current) return;
+    finalizingRef.current = true;
     setStatus("ended");
     try {
       const transcriptText = transcriptTextRef.current.trim() || "No transcript captured.";
