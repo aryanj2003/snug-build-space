@@ -140,6 +140,7 @@ function IntakePage() {
   const fieldEventsRef = useRef<FieldEvent[]>([]);
   const draftRef = useRef<CaseDraft>({});
   const transcriptTextRef = useRef<string>("");
+  const finalizingRef = useRef<boolean>(false);
 
   // Anonymous sign-in on load + prefetch voice token
   useEffect(() => {
