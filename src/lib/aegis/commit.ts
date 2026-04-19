@@ -68,12 +68,12 @@ export async function commitCase(input: CommitInput): Promise<CommitOutput> {
   events.push({
     seq: events.length + 1,
     event_type: "classified",
-    payload: input.classification,
+    payload: { ...input.classification },
   });
   events.push({
     seq: events.length + 1,
     event_type: "completeness_scored",
-    payload: input.completeness,
+    payload: { score: input.completeness.score, missing_fields: input.completeness.missing_fields },
   });
   events.push({
     seq: events.length + 1,
@@ -90,17 +90,18 @@ export async function commitCase(input: CommitInput): Promise<CommitOutput> {
     payload: { case_id: caseId },
   });
 
-  let prevHash: string | null = null;
-  const rows: Array<{
+  type AuditRow = {
     case_id: string;
     user_id: string;
     seq: number;
-    event_type: string;
+    event_type: AuditEventInput["event_type"];
     payload: Record<string, unknown>;
     prev_hash: string | null;
     hash: string;
     created_at: string;
-  }> = [];
+  };
+  let prevHash: string | null = null;
+  const rows: AuditRow[] = [];
   for (const ev of events) {
     const created_at = new Date().toISOString();
     const hash = await computeHash({
