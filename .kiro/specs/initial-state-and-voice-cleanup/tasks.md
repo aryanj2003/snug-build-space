@@ -1,0 +1,95 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration tests
+  - **Property 1: Bug Condition** - Initial State Hardcoded Metrics & Voice Not Terminated on Finalize
+  - **CRITICAL**: This test MUST FAIL on unfixed code — failure confirms the bugs exist
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior — it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate both bugs exist
+  - **Scoped PBT Approach**: Scope the property to the concrete failing cases:
+    - **Bug A**: Render `EnforcementLedger` with `classification=null`, `draft={}`, `completeness=null`, `transcript=[]`, `startedAt=null` and assert:
+      - The confidence gauge displays 0% (not 94%)
+      - The "Validations" stat does NOT show "4/4 passed"
+      - The "Risk band" stat does NOT show "LOW" — should show "—"
+    - **Bug B**: Create a mock `conversation.endSession` ref, simulate `finalize_intake` being called when `status="live"`, and assert `endSession` would be called (it won't be on unfixed code)
+  - Create test file at `src/lib/aegis/bugCondition.test.tsx`
+  - Use vitest and `@testing-library/react` for component rendering tests
+  - For Bug B, extract the `finalize_intake` logic into a testable helper or test the behavior by checking that the `endSessionRef` is invoked
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct — it proves the bugs exist)
+  - Document counterexamples found:
+    - Bug A: gauge renders "94%" instead of "0%", stats show "4/4 passed" and "LOW"
+    - Bug B: `finalize_intake` never calls `endSession()`
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 1.3, 1.4_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - Dynamic Gauge Updates & Existing Finalization Paths
+  - **IMPORTANT**: Follow observation-first methodology
+  - **Observe on UNFIXED code**:
+    - Render `EnforcementLedger` with non-null `classification` (e.g., `{ dispute_reason: "unauthorized", confidence: 0.85 }`) and non-null `completeness` (e.g., `{ score: 0.7, missing_fields: ["last4", "description"] }`) → observe gauge shows 85%, stats derive from actual data
+    - Render with `classification.confidence = 0.5` → observe gauge shows 50%
+    - Render with various `completeness.missing_fields` lengths → observe "Missing fields" stat updates correctly
+    - Verify `stopVoice()` calls `conversation.endSession()` then `finalize()` — existing behavior
+  - **Write property-based tests** using `fast-check`:
+    - Generate random `ClassifyResult` with `confidence` in [0, 1] and random `CompletenessResult`, render `ConfidenceGauge`, verify displayed percentage equals `Math.round(confidence * 100)` and "Missing fields" stat matches actual missing count
+    - Generate random confidence values in [0, 1], verify risk band mapping is consistent: ≥0.8 → "LOW", 0.5–0.8 → "MEDIUM", <0.5 → "HIGH" (when classification is non-null)
+    - Verify `stopVoice()` path: `conversation.endSession()` is called followed by `finalize()` — same as original behavior
+    - Verify `finalize_intake` when `status != "live"` proceeds to `finalize()` without calling `endSession()`
+  - Create test file at `src/lib/aegis/preservation.test.tsx`
+  - Run tests on UNFIXED code
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+
+- [x] 3. Fix for initial state hardcoded metrics and voice not terminated on finalize
+
+  - [x] 3.1 Fix ConfidenceGauge to derive stats from actual state (Bug A)
+    - In `src/components/aegis/EnforcementLedger.tsx`:
+    - Remove the `?? 0.94` confidence fallback — change `classification?.confidence ?? draft.classification_confidence ?? 0.94` to `classification?.confidence ?? draft.classification_confidence ?? 0`
+    - Extend `ConfidenceGauge` props to accept `completeness: CompletenessResult | null` and `classification: ClassifyResult | null`
+    - Derive "Validations" stat dynamically: count filled extraction rows vs total rows (e.g., `${filledCount}/${totalCount} passed`), or show "—" when no data exists
+    - Derive "Risk band" stat dynamically from `classification?.confidence`: ≥0.8 → "LOW", 0.5–0.8 → "MEDIUM", <0.5 → "HIGH", null/undefined → "—"
+    - Keep "Schema" stat as "ISO-20022" (constant)
+    - Pass `completeness` and `classification` props from `EnforcementLedger` to `ConfidenceGauge`
+    - _Bug_Condition: isBugCondition(input) where input.triggerSource == "render" AND input.classification == null AND input.draft == {} AND input.completeness == null_
+    - _Expected_Behavior: gauge shows 0%, validations show "—" or "0/N", risk band shows "—"_
+    - _Preservation: When classification/completeness are non-null, gauge and stats must display actual derived values identical to original behavior for non-idle states_
+    - _Requirements: 1.1, 1.2, 2.1, 2.2, 3.1, 3.2_
+
+  - [x] 3.2 Ensure voice session terminates on finalize_intake (Bug B)
+    - In `src/routes/index.tsx`:
+    - Create a ref (e.g., `endSessionRef`) to hold the `conversation.endSession` method so it can be accessed from `finalize_intake` and `finalize()`
+    - Update `finalize_intake` client tool: before calling `finalize()`, check if the session is live and call `endSessionRef.current()` to terminate the voice stream
+    - Alternatively, update `finalize()` to accept or reference the conversation's `endSession` via the ref, calling it when `status === "live"`
+    - Guard against double `endSession()` calls — since `stopVoice()` already calls `endSession()` before `finalize()`, ensure calling it twice doesn't cause errors (use a flag or check status)
+    - _Bug_Condition: isBugCondition(input) where input.triggerSource == "finalize_intake" AND input.status == "live"_
+    - _Expected_Behavior: conversation.endSession() is called, voice stream terminates_
+    - _Preservation: stopVoice() path must continue to call endSession() then finalize() as before; finalize_intake when status != "live" must not call endSession()_
+    - _Requirements: 1.3, 1.4, 2.3, 2.4, 3.5_
+
+  - [x] 3.3 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - Initial State Shows Zeroed Metrics & Voice Terminated on Finalize
+    - **IMPORTANT**: Re-run the SAME test from task 1 — do NOT write a new test
+    - The test from task 1 encodes the expected behavior
+    - When this test passes, it confirms the expected behavior is satisfied:
+      - Bug A: gauge shows 0%, validations show placeholder, risk band shows "—"
+      - Bug B: `endSession()` is called when `finalize_intake` runs during a live session
+    - Run bug condition exploration test from step 1
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bugs are fixed)
+    - _Requirements: 2.1, 2.2, 2.3, 2.4_
+
+  - [x] 3.4 Verify preservation tests still pass
+    - **Property 2: Preservation** - Dynamic Gauge Updates & Existing Finalization Paths
+    - **IMPORTANT**: Re-run the SAME tests from task 2 — do NOT write new tests
+    - Run preservation property tests from step 2
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all tests still pass after fix (no regressions)
+    - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5_
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Run the full test suite (`vitest --run`)
+  - Ensure all bug condition tests pass (Bug A idle state, Bug B voice termination)
+  - Ensure all preservation property tests pass (dynamic gauge, existing flows)
+  - Ensure no existing tests in the project are broken
+  - Ask the user if questions arise
