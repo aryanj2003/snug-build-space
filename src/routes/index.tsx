@@ -379,6 +379,7 @@ function IntakePage() {
     fieldEventsRef.current = [];
     draftRef.current = {};
     transcriptTextRef.current = "";
+    finalizingRef.current = false;
     cancelSim();
   };
 
