@@ -227,7 +227,7 @@ function LedgerRow({
       </td>
       <td className="px-4 py-2.5 text-muted-foreground">
         {isAccount ? (
-          <span className="rounded-sm border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] uppercase tracking-wider text-emerald-400">
+          <span className="rounded-sm border border-emerald-500/30 bg-emerald-500/10 px-1 py-px text-[8px] uppercase tracking-wider text-emerald-400">
             account lookup
           </span>
         ) : citation ? (
