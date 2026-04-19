@@ -253,14 +253,6 @@ function LedgerRow({
       </td>
     </motion.tr>
   );
-        </table>
-      </div>
-
-      <div className="border-t border-border/60 p-4">
-        <ConfidenceGauge value={confidence} missing={completeness?.missing_fields.length ?? 0} />
-      </div>
-    </section>
-  );
 }
 
 function ConfidenceGauge({ value, missing }: { value: number; missing: number }) {
