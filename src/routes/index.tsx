@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { ensureAnonymousSession } from "@/lib/aegis/auth";
 import { supabase } from "@/integrations/supabase/client";
 import { classifyTranscript } from "@/server/classify.functions";
-import { getElevenLabsToken } from "@/server/elevenlabs.functions";
+import { getElevenLabsToken, getElevenLabsSignedUrl } from "@/server/elevenlabs.functions";
 import { scoreCompleteness } from "@/lib/aegis/completeness";
 import { route as runRoute } from "@/lib/aegis/router";
 import { commitCase } from "@/lib/aegis/commit";
@@ -247,16 +247,17 @@ function IntakePage() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
 
-      // Mint a FRESH conversation token at click time — they expire in ~15min.
-      const tok = await getElevenLabsToken();
-      if (!tok.token) {
-        throw new Error(tok.error ?? "Could not get a conversation token");
+      // Use WebSocket transport — ElevenLabs' WebRTC endpoint is currently
+      // returning 404 on /rtc/v1/validate for this SDK version. WS is reliable.
+      const signed = await getElevenLabsSignedUrl();
+      if (!signed.signedUrl) {
+        throw new Error(signed.error ?? "Could not get a signed conversation URL");
       }
-      setVoiceToken(tok.token);
+      setVoiceToken(signed.signedUrl);
 
       conversation.startSession({
-        conversationToken: tok.token,
-        connectionType: "webrtc",
+        signedUrl: signed.signedUrl,
+        connectionType: "websocket",
       });
     } catch (e) {
       console.error("start voice failed", e);
