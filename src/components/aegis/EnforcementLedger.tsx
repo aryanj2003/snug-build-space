@@ -17,7 +17,8 @@ interface Row {
   field: string;
   label: string;
   value: string | null;
-  category: "TXN" | "MERCHANT" | "INTENT" | "CHANNEL";
+  category: "TXN" | "MERCHANT" | "INTENT" | "CHANNEL" | "WHEN" | "WHERE";
+  source: "CALLER" | "ACCOUNT";
 }
 
 const REASON_LABEL: Record<string, string> = {
@@ -32,12 +33,13 @@ const REASON_LABEL: Record<string, string> = {
 
 export function EnforcementLedger({ draft, classification, completeness, transcript, startedAt }: Props) {
   const { setHovered } = useTrace();
-  const rows: Row[] = useMemo(() => {
+  const callerRows: Row[] = useMemo(() => {
     return [
       {
         field: "amount_cents",
         label: "Transaction",
         category: "TXN",
+        source: "CALLER",
         value:
           typeof draft.amount_cents === "number"
             ? `$${(draft.amount_cents / 100).toFixed(2)} ${draft.currency ?? "USD"}`
@@ -47,26 +49,61 @@ export function EnforcementLedger({ draft, classification, completeness, transcr
         field: "merchant",
         label: "Merchant",
         category: "MERCHANT",
+        source: "CALLER",
         value: draft.merchant ?? null,
+      },
+      {
+        field: "transaction_date",
+        label: "Date",
+        category: "WHEN",
+        source: "CALLER",
+        value: draft.transaction_date
+          ? draft.approx_time_of_day
+            ? `${draft.transaction_date} (${draft.approx_time_of_day})`
+            : draft.transaction_date
+          : null,
       },
       {
         field: "dispute_reason",
         label: "Intent",
         category: "INTENT",
+        source: "CALLER",
         value: draft.dispute_reason
           ? REASON_LABEL[draft.dispute_reason] ?? draft.dispute_reason
           : classification
             ? REASON_LABEL[classification.dispute_reason] ?? classification.dispute_reason
             : null,
       },
-      {
-        field: "network",
-        label: "Category",
-        category: "CHANNEL",
-        value: draft.network ? `${draft.network} · Card-Present` : null,
-      },
     ];
   }, [draft, classification]);
+
+  const accountRows: Row[] = useMemo(() => {
+    return [
+      {
+        field: "customer_name",
+        label: "Cardholder",
+        category: "MERCHANT",
+        source: "ACCOUNT",
+        value: draft.customer_name ?? null,
+      },
+      {
+        field: "network",
+        label: "Network",
+        category: "CHANNEL",
+        source: "ACCOUNT",
+        value: draft.network ? `${draft.network} · Card-on-file` : null,
+      },
+      {
+        field: "last4",
+        label: "Card ending",
+        category: "CHANNEL",
+        source: "ACCOUNT",
+        value: draft.last4 ? `•••• ${draft.last4}` : null,
+      },
+    ];
+  }, [draft]);
+
+  const rows = useMemo(() => [...callerRows, ...accountRows], [callerRows, accountRows]);
 
   const confidence = classification?.confidence ?? draft.classification_confidence ?? 0.94;
 
