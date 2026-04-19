@@ -233,9 +233,9 @@ function IntakePage() {
   });
 
   const startVoice = useCallback(async () => {
-    if (!hasCredentials || !agentId || !voiceToken) {
+    if (!hasCredentials || !agentId) {
       toast.error("Voice not configured", {
-        description: "Missing a valid agent ID or conversation token.",
+        description: "Missing a valid agent ID.",
       });
       return;
     }
@@ -247,8 +247,15 @@ function IntakePage() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
 
+      // Mint a FRESH conversation token at click time — they expire in ~15min.
+      const tok = await getElevenLabsToken();
+      if (!tok.token) {
+        throw new Error(tok.error ?? "Could not get a conversation token");
+      }
+      setVoiceToken(tok.token);
+
       conversation.startSession({
-        conversationToken: voiceToken,
+        conversationToken: tok.token,
         connectionType: "webrtc",
       });
     } catch (e) {
@@ -258,7 +265,7 @@ function IntakePage() {
       });
       setStatus("idle");
     }
-  }, [agentId, conversation, hasCredentials, voiceToken]);
+  }, [agentId, conversation, hasCredentials]);
 
   const stopVoice = useCallback(async () => {
     try {
