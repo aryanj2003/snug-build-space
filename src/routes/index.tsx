@@ -26,7 +26,72 @@ import type {
   DisputeReason,
   NetworkType,
 } from "@/lib/aegis/types";
+import {
+  CAPTURE_FIELDS,
+  DISPUTE_REASONS,
+  NETWORK_TYPES,
+  type CaptureField,
+} from "@/lib/aegis/types";
 import { Toaster } from "@/components/ui/sonner";
+
+const CAPTURE_FIELD_SET = new Set<string>(CAPTURE_FIELDS);
+const DISPUTE_REASON_SET = new Set<string>(DISPUTE_REASONS);
+const NETWORK_SET = new Set<string>(NETWORK_TYPES);
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function coerceFieldValue(
+  field: CaptureField,
+  value: unknown,
+):
+  | { ok: true; value: string | number }
+  | { ok: false; reason: string } {
+  if (value === null || value === undefined || value === "") {
+    return { ok: false, reason: "empty_value" };
+  }
+  switch (field) {
+    case "amount_cents": {
+      const raw = String(value);
+      const n = typeof value === "number" ? value : Number(raw.replace(/[^\d.-]/g, ""));
+      if (!Number.isFinite(n)) return { ok: false, reason: "not_a_number" };
+      const cents = raw.includes(".") ? Math.round(n * 100) : Math.round(n);
+      if (cents < 0) return { ok: false, reason: "negative" };
+      return { ok: true, value: cents };
+    }
+    case "network": {
+      const up = String(value).toUpperCase().trim();
+      const map: Record<string, NetworkType> = {
+        VISA: "VISA",
+        MC: "MC",
+        MASTERCARD: "MC",
+        "MASTER CARD": "MC",
+        AMEX: "AMEX",
+        "AMERICAN EXPRESS": "AMEX",
+        DISCOVER: "DISCOVER",
+      };
+      const v = map[up] ?? (NETWORK_SET.has(up) ? (up as NetworkType) : "OTHER");
+      return { ok: true, value: v };
+    }
+    case "currency": {
+      const up = String(value).toUpperCase().trim().slice(0, 3);
+      if (!/^[A-Z]{3}$/.test(up)) return { ok: false, reason: "bad_currency" };
+      return { ok: true, value: up };
+    }
+    case "transaction_date": {
+      const s = String(value).trim();
+      if (ISO_DATE.test(s)) return { ok: true, value: s };
+      const d = new Date(s);
+      if (Number.isNaN(d.getTime())) return { ok: false, reason: "bad_date" };
+      return { ok: true, value: d.toISOString().slice(0, 10) };
+    }
+    case "last4": {
+      const digits = String(value).replace(/\D/g, "").slice(-4);
+      if (digits.length !== 4) return { ok: false, reason: "bad_last4" };
+      return { ok: true, value: digits };
+    }
+    default:
+      return { ok: true, value: String(value).trim() };
+  }
+}
 
 export const Route = createFileRoute("/")({
   component: IntakeRoute,
