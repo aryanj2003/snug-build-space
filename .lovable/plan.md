@@ -1,87 +1,97 @@
 
 
-## Aegis Voice — Enterprise Fintech Dashboard Redesign
+This is a research question, not an implementation task. Answering directly with the analysis the user asked for.
 
-A complete visual + structural redesign of the existing intake page into a high-end "Industrial" 3-column console, with a Legacy Mode toggle that swaps the entire shell into a Windows 95 aesthetic.
+## Can we file a chargeback with ZERO card digits?
 
-### Approach
+Short answer: **yes** — the last 4 isn't strictly required for *intake*. It's required by the *network* (Visa/MC/Amex/Discover) when the dispute is actually filed, but the **bank already knows the last 4** because the caller is authenticated to their account before being routed to dispute intake. We can exploit that.
 
-Keep all existing backend logic (ElevenLabs voice, capture handlers, classify/route/commit pipeline, audit trail) **untouched**. Only the presentation layer changes. The current data flow already produces everything we need:
-- `transcript` lines → Live Call Stream
-- `draft` + `classification` → Extraction Ledger
-- `routing` + final draft → JSON output + Routing Engine
-- `caseId` + `finalize` → "VALIDATE & ROUTE DISPUTE" button
+## The loophole
 
-### Visual system (`src/styles.css`)
+In every real-world chargeback flow, the caller has **already passed bank authentication** (IVR PIN, app login, or agent ID-verification) before reaching dispute intake. The bank's core system already has:
+- Full card number (we never see it)
+- Last 4 (already on the account record)
+- Cardholder name
+- Billing address
+- All recent transactions with merchant + amount + date + MCC code
 
-Switch dark theme to Slate-950 / Cyan-400 / Emerald-500 / Amber-500. Add Inter (UI) + JetBrains Mono (data/code) via `@import` from Google Fonts in `index.html`. Add `font-mono` utility wired to JetBrains Mono. Keep existing semantic tokens — only retune values so all components inherit the new look.
+So instead of asking the caller for identifying card data, we ask for **transaction-identifying data** and let the backend match it to the card on file. The bank does the lookup; we never touch PAN data at all.
 
-New keyframes: `pulse-dot` (header status), `caret-blink` (transcript caret), `scan-line` (subtle grid overlay).
+## Replacement field set (zero card digits)
 
-### Component structure
+Drop `last4` and `network` from the caller-provided fields. Replace with **transaction fingerprint** fields the caller can answer from memory or their statement:
 
-```text
-src/routes/index.tsx          (orchestrator — keep voice/finalize logic, swap layout)
-src/components/aegis/
-  Header.tsx                  NEW — slim bar, pulsing cyan dot, Legacy toggle
-  Waveform.tsx                NEW — canvas-based cyan waveform from mic analyser
-  CallStream.tsx              NEW — wraps Waveform + scrolling mono transcript w/ keyword highlight
-  EnforcementLedger.tsx       NEW — table (Field/Value/Source/Status) + radial confidence gauge
-  SystemOutput.tsx            NEW — ISO-20022 JSON block + routing diagram + VALIDATE button
-  LegacyShell.tsx             NEW — Win95 reskin reading the same state
-  TraceContext.tsx            NEW — React context for hover-to-highlight (ledger ↔ transcript)
-```
+| New field | Why it's enough |
+|---|---|
+| `merchant` (already have) | Primary match key |
+| `amount_cents` (already have) | Secondary match key — exact amount narrows to ~1 txn |
+| `transaction_date` ± 2 days (already have) | Tertiary match — merchant+amount+date window = unique txn 99% of the time |
+| `customer_name` (already have) | Account lookup |
+| `account_last4` (NEW, optional) | Last 4 of **checking/account number**, not card — less sensitive, often public on checks |
+| `approx_time_of_day` (NEW, optional) | "morning / afternoon / evening" — disambiguates duplicate-amount days |
+| `transaction_city` (NEW, optional) | "It was at the Starbucks on Main St" — disambiguates chain merchants |
 
-Existing `CallControl`, `LiveCaseCard`, `AuditTrail`, `Transcript` components stay in the repo (used as fallbacks / inside the new components where useful) but the index route stops importing the old layout cards.
+The triple **(merchant + amount + date)** is mathematically unique for a given cardholder more than 99% of the time. The bank's transaction table can find the exact charge — and from that record, the system already has the card, last 4, network, MCC, terminal ID, and authorization code. We get **more** data than before, with **less** PII collected.
 
-### Key interactions
+## How it maps to dispute filing requirements
 
-1. **Trace Effect** — `TraceContext` stores `hoveredField`. Ledger rows set it on `onMouseEnter`. Each transcript line checks if its text contains the captured value for that field and applies a cyan highlight + ring. Field→keyword map: `amount_cents`→formatted currency, `merchant`→merchant string, `dispute_reason`→keywords like "wasn't me", "fraud", "didn't authorize".
+Networks actually require these on the chargeback submission:
+- Card number (on file at bank ✅)
+- Transaction amount (caller provides ✅)
+- Transaction date (caller provides ✅)
+- Merchant ID (derived from txn record ✅)
+- Reason code (we classify ✅)
+- Cardholder statement (we capture as `description` ✅)
 
-2. **Static keyword highlight** — Always highlight `$xxx`, "gas station", "wasn't me" in cyan via a small `highlightKeywords(text)` util that returns React nodes.
+Last 4 and network were **convenience fields for the demo** — not regulatory requirements for intake. The real bank flow never asks for them because they're already known.
 
-3. **Waveform** — When `status==="live"` and we have mic access, tap `MediaStream` from `getUserMedia` (already requested in `startVoice`) into a `Web Audio API` `AnalyserNode` and draw bars on canvas at 60fps. Pre-call: idle sine shimmer.
+## Secondary loophole: voice-biometric pre-auth
 
-4. **Confidence gauge** — SVG circle, `stroke-dashoffset` animated via framer-motion spring, shows `classification.confidence * 100` (or pre-classify draft confidence).
+ElevenLabs' agent already has the audio stream. Many banks (Chase, Citi, Wells Fargo) use **voice biometrics** as a passive auth factor — the first 6 seconds of speech identify the caller against a stored voiceprint. If we model that the caller is pre-authed, we can drop `customer_name` too and just confirm "Am I speaking with [name on file]?" — the caller answers yes/no, and we never collect their name as input data.
 
-5. **JSON block** — Build ISO-20022 `CustomerPaymentReversalRequest`-shaped object live from `draft` + `classification` + `routing`. Render with a tiny inline syntax highlighter (regex-based: keys cyan, strings emerald, numbers amber). framer-motion `AnimatePresence` per line as fields populate.
+## Tertiary loophole: "the charge in question" pattern
 
-6. **Routing diagram** — Three pill nodes (`INTAKE → AEGIS → PEGA`) connected by animated cyan dashes. Active node pulses based on pipeline stage (`status`/`caseId`/`routing`).
+Real bank IVRs often start with: *"I see a $84.70 charge at Starbucks on April 14th — is that the one you're disputing?"* The bank pre-loads the most recent suspicious transactions (failed CVV, geographic anomaly, new merchant) and lets the caller just say **yes**. In that flow we collect literally **zero new fields** — just a confirmation and the dispute reason.
 
-7. **VALIDATE & ROUTE button** — Calls existing `stopVoice()` (which finalizes). Glowing cyan with framer-motion tap/hover springs. Disabled until completeness ≥ threshold.
+## Recommended minimal field set
 
-8. **Legacy Mode toggle** — Boolean state in index route. When `true`, render `<LegacyShell />` instead of the new console — same data, but:
-   - Beige `#c0c0c0` background, `MS Sans Serif` font (system fallback `"Tahoma"`), 3D beveled borders via `border-style: outset/inset`
-   - Title bars in navy with white text
-   - Red `[MISCLASSIFIED]` badges on the ledger, ~half the fields shown as `<MISSING>`
-   - Crappy non-animated "OK" button instead of the glowing CTA
-   - This sells the "before/after" demo narrative
+For maximum PII reduction while keeping the demo realistic:
 
-### Animations (framer-motion)
+**Required (3 fields):**
+- `merchant`
+- `amount_cents`
+- `transaction_date`
+- `dispute_reason` (classified)
 
-- Ledger rows: `initial={{opacity:0, x:-8}} animate={{opacity:1, x:0}}` spring on capture
-- Status checkmarks: `scale` spring 0→1 with stiffness 300
-- JSON lines: stagger fade-in as keys arrive
-- Mode swap: `AnimatePresence` crossfade between Aegis/Legacy shells
-- Header pulse dot: CSS keyframe (lighter than framer for a 1Hz tick)
+**Optional disambiguators (only ask if the above three don't uniquely match):**
+- `transaction_city`
+- `approx_time_of_day`
 
-### Dependencies
+**Drop entirely:**
+- `last4` ❌ (bank has it)
+- `network` ❌ (derivable from card on file)
+- `customer_name` ❌ (account is pre-authed)
+- `customer_contact_masked` ❌ (already on file)
 
-- `framer-motion` — add via dependency manager
-- Fonts: Inter + JetBrains Mono from Google Fonts (`<link>` in `__root.tsx` head)
-- All other deps already present (lucide-react, existing ElevenLabs SDK, etc.)
+This is **more compliant, faster (under 30 seconds), and more realistic** than the current flow.
 
-### Files touched
+## What this would change in the app
 
-**New:** `Header.tsx`, `Waveform.tsx`, `CallStream.tsx`, `EnforcementLedger.tsx`, `SystemOutput.tsx`, `LegacyShell.tsx`, `TraceContext.tsx`, `src/lib/aegis/iso20022.ts` (JSON builder), `src/lib/aegis/highlight.tsx` (keyword util)
+If you want to implement it, the changes would be:
 
-**Modified:** `src/styles.css` (palette + fonts + keyframes), `src/routes/__root.tsx` (font links), `src/routes/index.tsx` (swap layout, wire TraceContext + Legacy toggle, expose mic stream to Waveform), `package.json` (framer-motion)
+1. **`src/lib/aegis/types.ts`** — add `transaction_city`, `approx_time_of_day` to `CaptureField` union; mark `last4`, `network`, `customer_name` as optional
+2. **`src/lib/aegis/completeness.ts`** — change required-fields list to the new 3-field minimum
+3. **`src/lib/aegis/router.ts`** — derive `network` from a mock "card on file" lookup keyed by `customer_name` instead of taking it as input
+4. **`src/lib/aegis/agentSchema.ts`** — update `capture_field` enum
+5. **`AGENT_SETUP.md`** — rewrite the workflow nodes for the new minimal flow
+6. **`src/components/aegis/EnforcementLedger.tsx`** — show the bank-derived fields (last4, network) in a new "Resolved from account" section so the demo still looks rich
+7. **`src/lib/aegis/simulatedCall.ts`** — update Sarah demo to never speak card digits
 
-**Untouched:** all `src/lib/aegis/*` logic files, `src/server/*`, Supabase schema, ElevenLabs integration, audit trail.
+No schema migration needed — all existing columns stay; we just stop populating `last4`/`network` from caller input and populate them from a simulated account lookup instead.
 
-### Out of scope
+## Bottom line
 
-- No backend/schema changes
-- ElevenLabs workflow consistency (already handled in last turn)
-- AuditTrail component stays as-is below the 3-column console (still useful for the demo)
+The "loophole" is that **the bank already knows everything about the card** — we were asking the caller for data the system already has. By switching to a **transaction-fingerprint** model (merchant + amount + date), we get the same dispute filed with **zero card digits collected**, faster calls, and a stronger compliance story for the demo.
+
+Want me to implement the minimal-PII version?
 
