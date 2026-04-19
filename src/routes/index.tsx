@@ -26,7 +26,72 @@ import type {
   DisputeReason,
   NetworkType,
 } from "@/lib/aegis/types";
+import {
+  CAPTURE_FIELDS,
+  DISPUTE_REASONS,
+  NETWORK_TYPES,
+  type CaptureField,
+} from "@/lib/aegis/types";
 import { Toaster } from "@/components/ui/sonner";
+
+const CAPTURE_FIELD_SET = new Set<string>(CAPTURE_FIELDS);
+const DISPUTE_REASON_SET = new Set<string>(DISPUTE_REASONS);
+const NETWORK_SET = new Set<string>(NETWORK_TYPES);
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function coerceFieldValue(
+  field: CaptureField,
+  value: unknown,
+):
+  | { ok: true; value: string | number }
+  | { ok: false; reason: string } {
+  if (value === null || value === undefined || value === "") {
+    return { ok: false, reason: "empty_value" };
+  }
+  switch (field) {
+    case "amount_cents": {
+      const raw = String(value);
+      const n = typeof value === "number" ? value : Number(raw.replace(/[^\d.-]/g, ""));
+      if (!Number.isFinite(n)) return { ok: false, reason: "not_a_number" };
+      const cents = raw.includes(".") ? Math.round(n * 100) : Math.round(n);
+      if (cents < 0) return { ok: false, reason: "negative" };
+      return { ok: true, value: cents };
+    }
+    case "network": {
+      const up = String(value).toUpperCase().trim();
+      const map: Record<string, NetworkType> = {
+        VISA: "VISA",
+        MC: "MC",
+        MASTERCARD: "MC",
+        "MASTER CARD": "MC",
+        AMEX: "AMEX",
+        "AMERICAN EXPRESS": "AMEX",
+        DISCOVER: "DISCOVER",
+      };
+      const v = map[up] ?? (NETWORK_SET.has(up) ? (up as NetworkType) : "OTHER");
+      return { ok: true, value: v };
+    }
+    case "currency": {
+      const up = String(value).toUpperCase().trim().slice(0, 3);
+      if (!/^[A-Z]{3}$/.test(up)) return { ok: false, reason: "bad_currency" };
+      return { ok: true, value: up };
+    }
+    case "transaction_date": {
+      const s = String(value).trim();
+      if (ISO_DATE.test(s)) return { ok: true, value: s };
+      const d = new Date(s);
+      if (Number.isNaN(d.getTime())) return { ok: false, reason: "bad_date" };
+      return { ok: true, value: d.toISOString().slice(0, 10) };
+    }
+    case "last4": {
+      const digits = String(value).replace(/\D/g, "").slice(-4);
+      if (digits.length !== 4) return { ok: false, reason: "bad_last4" };
+      return { ok: true, value: digits };
+    }
+    default:
+      return { ok: true, value: String(value).trim() };
+  }
+}
 
 export const Route = createFileRoute("/")({
   component: IntakeRoute,
@@ -75,6 +140,7 @@ function IntakePage() {
   const fieldEventsRef = useRef<FieldEvent[]>([]);
   const draftRef = useRef<CaseDraft>({});
   const transcriptTextRef = useRef<string>("");
+  const finalizingRef = useRef<boolean>(false);
 
   // Anonymous sign-in on load + prefetch voice token
   useEffect(() => {
@@ -133,6 +199,8 @@ function IntakePage() {
   }, []);
 
   const finalize = useCallback(async () => {
+    if (finalizingRef.current) return;
+    finalizingRef.current = true;
     setStatus("ended");
     try {
       const transcriptText = transcriptTextRef.current.trim() || "No transcript captured.";
@@ -196,17 +264,35 @@ function IntakePage() {
   const conversation = useConversation({
     clientTools: {
       capture_field: (params: { field: string; value: unknown }) => {
-        captureField({ [params.field]: params.value } as Partial<CaseDraft>);
+        const field = String(params?.field ?? "").trim();
+        if (!CAPTURE_FIELD_SET.has(field)) {
+          console.warn("capture_field: unknown field", field);
+          return "unknown_field";
+        }
+        const result = coerceFieldValue(field as CaptureField, params?.value);
+        if (!result.ok) {
+          console.warn("capture_field: invalid value", field, params?.value, result.reason);
+          return `invalid:${result.reason}`;
+        }
+        captureField({ [field]: result.value } as Partial<CaseDraft>);
         return "ok";
       },
-      mark_dispute_reason: (params: { reason: DisputeReason; confidence?: number }) => {
+      mark_dispute_reason: (params: { reason: string; confidence?: number }) => {
+        const reason = String(params?.reason ?? "").trim().toLowerCase();
+        if (!DISPUTE_REASON_SET.has(reason)) {
+          console.warn("mark_dispute_reason: unknown reason", reason);
+          return "unknown_reason";
+        }
+        const rawConf = typeof params?.confidence === "number" ? params.confidence : 0.85;
+        const confidence = Math.max(0, Math.min(1, rawConf));
         captureField({
-          dispute_reason: params.reason,
-          classification_confidence: params.confidence ?? 0.85,
+          dispute_reason: reason as DisputeReason,
+          classification_confidence: confidence,
         });
         return "ok";
       },
       finalize_intake: () => {
+        if (finalizingRef.current) return "already_finalizing";
         void finalize();
         return "finalizing";
       },
@@ -293,6 +379,7 @@ function IntakePage() {
     fieldEventsRef.current = [];
     draftRef.current = {};
     transcriptTextRef.current = "";
+    finalizingRef.current = false;
     cancelSim();
   };
 

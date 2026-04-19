@@ -1,14 +1,32 @@
 // Shared types for Aegis intake. Safe to import on client + server.
 
-export type NetworkType = "VISA" | "MC" | "AMEX" | "DISCOVER" | "OTHER";
-export type DisputeReason =
-  | "unauthorized"
-  | "product_not_received"
-  | "product_not_as_described"
-  | "duplicate_charge"
-  | "cancelled_recurring"
-  | "credit_not_processed"
-  | "other";
+export const NETWORK_TYPES = ["VISA", "MC", "AMEX", "DISCOVER", "OTHER"] as const;
+export type NetworkType = (typeof NETWORK_TYPES)[number];
+
+export const DISPUTE_REASONS = [
+  "unauthorized",
+  "product_not_received",
+  "product_not_as_described",
+  "duplicate_charge",
+  "cancelled_recurring",
+  "credit_not_processed",
+  "other",
+] as const;
+export type DisputeReason = (typeof DISPUTE_REASONS)[number];
+
+export const CAPTURE_FIELDS = [
+  "customer_name",
+  "network",
+  "amount_cents",
+  "currency",
+  "merchant",
+  "transaction_date",
+  "last4",
+  "customer_contact_masked",
+  "description",
+] as const;
+export type CaptureField = (typeof CAPTURE_FIELDS)[number];
+
 export type CaseStatus = "intake" | "classified" | "routed" | "committed" | "failed";
 
 export interface CaseDraft {
