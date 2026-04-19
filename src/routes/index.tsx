@@ -12,6 +12,7 @@ import { scoreCompleteness } from "@/lib/aegis/completeness";
 import { route as runRoute } from "@/lib/aegis/router";
 import { commitCase } from "@/lib/aegis/commit";
 import { SARAH_DEMO } from "@/lib/aegis/simulatedCall";
+import { resolveCardOnFile } from "@/lib/aegis/cardOnFile";
 
 import { AegisHeader } from "@/components/aegis/Header";
 import { CallStream } from "@/components/aegis/CallStream";
@@ -227,6 +228,17 @@ function IntakePage() {
       }
       setClassification(classify);
       captureField({ dispute_reason: classify.dispute_reason });
+
+      // Minimal-PII: resolve card details from "card on file" instead of asking caller.
+      const cof = resolveCardOnFile({ ...draftRef.current, dispute_reason: classify.dispute_reason });
+      if (cof) {
+        const resolved: Partial<CaseDraft> = {};
+        if (!draftRef.current.network) resolved.network = cof.network;
+        if (!draftRef.current.last4) resolved.last4 = cof.last4;
+        if (!draftRef.current.customer_name) resolved.customer_name = cof.customer_name;
+        if (!draftRef.current.customer_contact_masked) resolved.customer_contact_masked = cof.customer_contact_masked;
+        if (Object.keys(resolved).length > 0) captureField(resolved);
+      }
 
       const comp = scoreCompleteness({ ...draftRef.current, dispute_reason: classify.dispute_reason });
       setCompleteness(comp);
