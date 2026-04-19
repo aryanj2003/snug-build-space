@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ShieldCheck, Activity } from "lucide-react";
-import { useConversation } from "@elevenlabs/react";
+import { useConversation, ConversationProvider } from "@elevenlabs/react";
 import { toast } from "sonner";
 
 import { ensureAnonymousSession } from "@/lib/aegis/auth";
@@ -29,7 +29,7 @@ import type {
 import { Toaster } from "@/components/ui/sonner";
 
 export const Route = createFileRoute("/")({
-  component: IntakePage,
+  component: IntakeRoute,
   head: () => ({
     meta: [
       { title: "Aegis Intake — Voice-first dispute filing" },
@@ -41,6 +41,14 @@ export const Route = createFileRoute("/")({
     ],
   }),
 });
+
+function IntakeRoute() {
+  return (
+    <ConversationProvider>
+      <IntakePage />
+    </ConversationProvider>
+  );
+}
 
 type Status = "idle" | "connecting" | "live" | "ended";
 
