@@ -1,6 +1,6 @@
 import type { CaseDraft, RouteResult, NetworkType, DisputeReason } from "./types";
 
-interface VendorRow {
+export interface VendorRow {
   id: string;
   name: string;
   supports_networks: NetworkType[];
@@ -9,7 +9,7 @@ interface VendorRow {
   active: boolean;
 }
 
-interface RuleRow {
+export interface RuleRow {
   id: string;
   priority: number;
   network: NetworkType | null;

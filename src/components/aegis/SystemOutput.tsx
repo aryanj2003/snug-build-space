@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { motion } from "framer-motion";
 import { Send, Code2, Network, Loader2 } from "lucide-react";
 import type { CaseDraft, ClassifyResult, CompletenessResult, RouteResult } from "@/lib/aegis/types";
@@ -15,7 +15,7 @@ interface Props {
   finalizing: boolean;
 }
 
-export function SystemOutput({
+export const SystemOutput = memo(function SystemOutput({
   draft,
   classification,
   routing,
@@ -25,23 +25,57 @@ export function SystemOutput({
   onValidateRoute,
   finalizing,
 }: Props) {
+  // Destructure every draft field that buildIso20022 reads so the memo
+  // depends on primitive values instead of the draft object reference.
+  // This prevents recomputation when unrelated state changes create a
+  // new draft object with identical field values.
+  const {
+    customer_name,
+    amount_cents,
+    currency,
+    merchant,
+    transaction_date,
+    last4,
+    network,
+    dispute_reason,
+    classification_confidence,
+    description,
+    customer_contact_masked,
+  } = draft;
+
   const json = useMemo(
     () => buildIso20022({ draft, classification, routing, caseId }),
-    [draft, classification, routing, caseId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [
+      customer_name,
+      amount_cents,
+      currency,
+      merchant,
+      transaction_date,
+      last4,
+      network,
+      dispute_reason,
+      classification_confidence,
+      description,
+      customer_contact_masked,
+      classification,
+      routing,
+      caseId,
+    ],
   );
   const html = useMemo(() => syntaxHighlightJson(JSON.stringify(json, null, 2)), [json]);
 
-  const stage: "intake" | "aegis" | "pega" =
-    routing || caseId ? "pega" : status === "live" || Object.keys(draft).length > 0 ? "aegis" : "intake";
+  const stage: "intake" | "aegis" | "dispatch" =
+    routing || caseId ? "dispatch" : status === "live" || Object.keys(draft).length > 0 ? "aegis" : "intake";
 
   const completePct = Math.round((completeness?.score ?? 0) * 100);
   const canRoute = (completeness?.score ?? 0) >= 0.5 || status === "ended";
 
   return (
     <section className="flex h-full flex-col gap-4">
-      {/* JSON output */}
-      <div className="flex flex-1 flex-col rounded-sm border border-border/60 bg-card/40 backdrop-blur-sm shadow-[var(--shadow-card)]">
-        <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5">
+      {/* JSON output — height-capped */}
+      <div className="flex flex-col rounded-sm border border-border/60 bg-card/40 backdrop-blur-sm shadow-[var(--shadow-card)] max-h-[35vh] min-h-0">
+        <div className="flex items-center justify-between border-b border-border/60 px-4 py-2.5 shrink-0">
           <div className="flex items-center gap-2 font-mono text-[11px] uppercase tracking-[0.18em] text-muted-foreground">
             <Code2 className="h-3.5 w-3.5 text-primary" />
             Bank-Compliant JSON
@@ -50,7 +84,7 @@ export function SystemOutput({
             ISO-20022
           </span>
         </div>
-        <div className="relative flex-1 overflow-auto bg-slate-950/70 p-3 font-mono text-[11px] leading-relaxed">
+        <div className="relative flex-1 overflow-auto bg-slate-950/70 p-3 font-mono text-[11px] leading-relaxed min-h-0">
           <pre
             className="whitespace-pre text-foreground/90"
             // syntax highlighter returns escaped HTML
@@ -108,15 +142,15 @@ export function SystemOutput({
       </div>
     </section>
   );
-}
+});
 
-function RoutingDiagram({ stage }: { stage: "intake" | "aegis" | "pega" }) {
+function RoutingDiagram({ stage }: { stage: "intake" | "aegis" | "dispatch" }) {
   const nodes = [
     { id: "intake", label: "INTAKE" },
     { id: "aegis", label: "AEGIS" },
-    { id: "pega", label: "PEGA" },
+    { id: "dispatch", label: "DISPATCH" },
   ] as const;
-  const order = { intake: 0, aegis: 1, pega: 2 } as const;
+  const order = { intake: 0, aegis: 1, dispatch: 2 } as const;
   const activeIdx = order[stage];
 
   return (
