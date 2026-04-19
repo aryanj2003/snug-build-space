@@ -77,33 +77,33 @@ export const EnforcementLedger = memo(function EnforcementLedger({ draft, classi
     ];
   }, [draft, classification]);
 
-  const accountRows: Row[] = useMemo(() => {
+  const extraCallerRows: Row[] = useMemo(() => {
     return [
       {
         field: "customer_name",
         label: "Cardholder",
         category: "MERCHANT",
-        source: "ACCOUNT",
+        source: "CALLER",
         value: draft.customer_name ?? null,
       },
       {
         field: "network",
         label: "Network",
         category: "CHANNEL",
-        source: "ACCOUNT",
+        source: "CALLER",
         value: draft.network ? `${draft.network} · Card-on-file` : null,
       },
       {
         field: "last4",
         label: "Card ending",
         category: "CHANNEL",
-        source: "ACCOUNT",
+        source: "CALLER",
         value: draft.last4 ? `•••• ${draft.last4}` : null,
       },
     ];
   }, [draft]);
 
-  const rows = useMemo(() => [...callerRows, ...accountRows], [callerRows, accountRows]);
+  const rows = useMemo(() => [...callerRows, ...extraCallerRows], [callerRows, extraCallerRows]);
 
   const confidence = classification?.confidence ?? draft.classification_confidence ?? 0;
 
@@ -143,22 +143,11 @@ export const EnforcementLedger = memo(function EnforcementLedger({ draft, classi
           <tbody>
             <SectionRow label="Caller-provided · Transaction fingerprint" />
             <AnimatePresence>
-              {callerRows.map((r) => (
+              {rows.map((r) => (
                 <LedgerRow
                   key={r.field}
                   row={r}
                   citation={citation(r)}
-                  onHover={setHovered}
-                />
-              ))}
-            </AnimatePresence>
-            <SectionRow label="Resolved from account · Card on file" />
-            <AnimatePresence>
-              {accountRows.map((r) => (
-                <LedgerRow
-                  key={r.field}
-                  row={r}
-                  citation={null}
                   onHover={setHovered}
                 />
               ))}
