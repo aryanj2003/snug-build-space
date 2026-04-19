@@ -5,7 +5,7 @@ import { useConversation, ConversationProvider } from "@elevenlabs/react";
 import { toast } from "sonner";
 
 import { ensureAnonymousSession } from "@/lib/aegis/auth";
-import { supabase } from "@/integrations/supabase/client";
+import { publicSupabase as supabase } from "@/lib/aegis/publicSupabase";
 import { classifyTranscript } from "@/server/classify.functions";
 import { getElevenLabsToken, getElevenLabsSignedUrl } from "@/server/elevenlabs.functions";
 import { scoreCompleteness } from "@/lib/aegis/completeness";
