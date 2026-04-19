@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ShieldCheck, Activity } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
 import { useConversation, ConversationProvider } from "@elevenlabs/react";
 import { toast } from "sonner";
 
@@ -13,10 +13,16 @@ import { route as runRoute } from "@/lib/aegis/router";
 import { commitCase } from "@/lib/aegis/commit";
 import { SARAH_DEMO } from "@/lib/aegis/simulatedCall";
 
-import { CallControl } from "@/components/aegis/CallControl";
-import { Transcript, type TranscriptLine } from "@/components/aegis/Transcript";
-import { LiveCaseCard } from "@/components/aegis/LiveCaseCard";
+import { AegisHeader } from "@/components/aegis/Header";
+import { CallStream } from "@/components/aegis/CallStream";
+import { EnforcementLedger } from "@/components/aegis/EnforcementLedger";
+import { SystemOutput } from "@/components/aegis/SystemOutput";
+import { LegacyShell } from "@/components/aegis/LegacyShell";
+import { TraceProvider } from "@/components/aegis/TraceContext";
 import { AuditTrail, type AuditRow } from "@/components/aegis/AuditTrail";
+import type { TranscriptLine } from "@/components/aegis/Transcript";
+import { Button } from "@/components/ui/button";
+import { Mic, PhoneOff, Loader2, Play } from "lucide-react";
 
 import type {
   CaseDraft,
@@ -97,11 +103,11 @@ export const Route = createFileRoute("/")({
   component: IntakeRoute,
   head: () => ({
     meta: [
-      { title: "Aegis Intake — Voice-first dispute filing" },
+      { title: "Aegis Voice — Intake Enforcement Console" },
       {
         name: "description",
         content:
-          "Turn a customer call into a structured, classified, routed dispute case in under 60 seconds.",
+          "Voice-first dispute intake with deterministic protocol enforcement, ISO-20022 output, and an immutable audit ledger.",
       },
     ],
   }),
@@ -110,7 +116,9 @@ export const Route = createFileRoute("/")({
 function IntakeRoute() {
   return (
     <ConversationProvider>
-      <IntakePage />
+      <TraceProvider>
+        <IntakePage />
+      </TraceProvider>
     </ConversationProvider>
   );
 }
@@ -134,15 +142,17 @@ function IntakePage() {
   const [audit, setAudit] = useState<AuditRow[]>([]);
   const [hasCredentials, setHasCredentials] = useState(false);
   const [agentId, setAgentId] = useState<string | null>(null);
-  const [voiceToken, setVoiceToken] = useState<string | null>(null);
+  const [, setVoiceToken] = useState<string | null>(null);
   const [authReady, setAuthReady] = useState(false);
+  const [legacy, setLegacy] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
+  const [startedAt, setStartedAt] = useState<number | null>(null);
 
   const fieldEventsRef = useRef<FieldEvent[]>([]);
   const draftRef = useRef<CaseDraft>({});
   const transcriptTextRef = useRef<string>("");
   const finalizingRef = useRef<boolean>(false);
 
-  // Anonymous sign-in on load + prefetch voice token
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -201,6 +211,7 @@ function IntakePage() {
   const finalize = useCallback(async () => {
     if (finalizingRef.current) return;
     finalizingRef.current = true;
+    setFinalizing(true);
     setStatus("ended");
     try {
       const transcriptText = transcriptTextRef.current.trim() || "No transcript captured.";
@@ -258,6 +269,8 @@ function IntakePage() {
       toast.error("Failed to finalize case", {
         description: e instanceof Error ? e.message : String(e),
       });
+    } finally {
+      setFinalizing(false);
     }
   }, [captureField]);
 
@@ -265,24 +278,15 @@ function IntakePage() {
     clientTools: {
       capture_field: (params: { field: string; value: unknown }) => {
         const field = String(params?.field ?? "").trim();
-        if (!CAPTURE_FIELD_SET.has(field)) {
-          console.warn("capture_field: unknown field", field);
-          return "unknown_field";
-        }
+        if (!CAPTURE_FIELD_SET.has(field)) return "unknown_field";
         const result = coerceFieldValue(field as CaptureField, params?.value);
-        if (!result.ok) {
-          console.warn("capture_field: invalid value", field, params?.value, result.reason);
-          return `invalid:${result.reason}`;
-        }
+        if (!result.ok) return `invalid:${result.reason}`;
         captureField({ [field]: result.value } as Partial<CaseDraft>);
         return "ok";
       },
       mark_dispute_reason: (params: { reason: string; confidence?: number }) => {
         const reason = String(params?.reason ?? "").trim().toLowerCase();
-        if (!DISPUTE_REASON_SET.has(reason)) {
-          console.warn("mark_dispute_reason: unknown reason", reason);
-          return "unknown_reason";
-        }
+        if (!DISPUTE_REASON_SET.has(reason)) return "unknown_reason";
         const rawConf = typeof params?.confidence === "number" ? params.confidence : 0.85;
         const confidence = Math.max(0, Math.min(1, rawConf));
         captureField({
@@ -299,6 +303,7 @@ function IntakePage() {
     },
     onConnect: () => {
       setStatus("live");
+      setStartedAt(Date.now());
     },
     onMessage: (m: { source?: string; message?: string; type?: string }) => {
       if (m && typeof m.message === "string") {
@@ -320,27 +325,17 @@ function IntakePage() {
 
   const startVoice = useCallback(async () => {
     if (!hasCredentials || !agentId) {
-      toast.error("Voice not configured", {
-        description: "Missing a valid agent ID.",
-      });
+      toast.error("Voice not configured", { description: "Missing a valid agent ID." });
       return;
     }
-
     resetSession();
     setStatus("connecting");
-
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach((track) => track.stop());
-
-      // Use WebSocket transport — ElevenLabs' WebRTC endpoint is currently
-      // returning 404 on /rtc/v1/validate for this SDK version. WS is reliable.
       const signed = await getElevenLabsSignedUrl();
-      if (!signed.signedUrl) {
-        throw new Error(signed.error ?? "Could not get a signed conversation URL");
-      }
+      if (!signed.signedUrl) throw new Error(signed.error ?? "Could not get a signed conversation URL");
       setVoiceToken(signed.signedUrl);
-
       conversation.startSession({
         signedUrl: signed.signedUrl,
         connectionType: "websocket",
@@ -380,12 +375,14 @@ function IntakePage() {
     draftRef.current = {};
     transcriptTextRef.current = "";
     finalizingRef.current = false;
+    setStartedAt(null);
     cancelSim();
   };
 
   const runSimulation = useCallback(() => {
     resetSession();
     setStatus("live");
+    setStartedAt(Date.now());
     let i = 0;
     const tick = () => {
       const step = SARAH_DEMO[i];
@@ -410,60 +407,133 @@ function IntakePage() {
   }, [draft, status]);
 
   return (
-    <div className="min-h-screen text-foreground">
+    <>
       <Toaster richColors theme="dark" position="top-right" />
-      <header className="border-b border-border/50 bg-background/30 backdrop-blur-md">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary text-primary-foreground shadow-[var(--shadow-glow)]">
-              <ShieldCheck className="h-5 w-5" />
+      <AnimatePresence mode="wait">
+        {legacy ? (
+          <motion.div
+            key="legacy"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+          >
+            <div className="fixed top-3 right-3 z-50">
+              <button
+                onClick={() => setLegacy(false)}
+                className="rounded-md border border-primary/40 bg-slate-950 px-3 py-1.5 font-mono text-[11px] uppercase tracking-wider text-primary hover:bg-primary/10"
+              >
+                ← Back to Aegis
+              </button>
             </div>
-            <div>
-              <div className="text-sm font-semibold tracking-tight">Aegis</div>
-              <div className="text-[11px] uppercase tracking-wider text-muted-foreground">
-                Voice-first dispute intake
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Activity className="h-3.5 w-3.5" />
-            {authReady ? "Demo session active" : "Starting demo session…"}
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-7xl space-y-6 px-6 py-8">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
-          <section className="space-y-6 lg:col-span-3">
-            <div className="rounded-2xl border bg-card/60 p-2 backdrop-blur-sm shadow-[var(--shadow-card)]">
-              <CallControl
-                status={status}
-                isAgentSpeaking={conversation.isSpeaking}
-                hasCredentials={hasCredentials}
-                onStart={startVoice}
-                onStop={stopVoice}
-                onSimulate={runSimulation}
-              />
-            </div>
-            <Transcript lines={transcript} />
-          </section>
-
-          <section className="lg:col-span-2">
-            <LiveCaseCard
+            <LegacyShell
               draft={draft}
               classification={classification}
-              completeness={completeness}
               routing={routing}
-              caseId={caseId}
+              transcript={transcript}
+              onStart={hasCredentials ? startVoice : runSimulation}
+              onFinalize={() => void finalize()}
             />
-          </section>
-        </div>
+          </motion.div>
+        ) : (
+          <motion.div
+            key="aegis"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="min-h-screen text-foreground"
+          >
+            <AegisHeader legacy={legacy} onToggleLegacy={setLegacy} />
 
-        <AuditTrail caseId={caseId} events={audit} />
-      </main>
-    </div>
+            <main className="mx-auto max-w-[1400px] space-y-4 px-6 py-6">
+              {/* Mini status / call control bar */}
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-sm border border-border/60 bg-card/40 px-4 py-3 backdrop-blur-sm">
+                <div className="flex items-center gap-3 font-mono text-[11px] uppercase tracking-wider text-muted-foreground">
+                  <span className="text-primary">SESSION</span>
+                  <span>·</span>
+                  <span>{authReady ? "AUTH OK" : "AUTH PENDING"}</span>
+                  <span>·</span>
+                  <span>{hasCredentials ? "VOICE READY" : "VOICE OFFLINE"}</span>
+                  <span>·</span>
+                  <span className={status === "live" ? "text-emerald-400" : ""}>
+                    STATUS: {status.toUpperCase()}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={runSimulation}
+                    disabled={status === "live" || status === "connecting"}
+                    className="gap-1.5 font-mono text-[11px] uppercase tracking-wider"
+                  >
+                    <Play className="h-3.5 w-3.5" />
+                    Simulate
+                  </Button>
+                  {status === "live" ? (
+                    <Button
+                      size="sm"
+                      onClick={stopVoice}
+                      className="gap-1.5 bg-destructive text-destructive-foreground font-mono text-[11px] uppercase tracking-wider hover:bg-destructive/90"
+                    >
+                      <PhoneOff className="h-3.5 w-3.5" />
+                      End Call
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      onClick={startVoice}
+                      disabled={!hasCredentials || status === "connecting"}
+                      className="gap-1.5 bg-primary text-primary-foreground font-mono text-[11px] uppercase tracking-wider hover:bg-primary/90"
+                    >
+                      {status === "connecting" ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Mic className="h-3.5 w-3.5" />
+                      )}
+                      Start Intake
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              {/* Main 3-column console */}
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+                <div className="lg:col-span-4">
+                  <CallStream status={status} lines={transcript} draft={draft} />
+                </div>
+                <div className="lg:col-span-4">
+                  <EnforcementLedger
+                    draft={draft}
+                    classification={classification}
+                    completeness={completeness}
+                    transcript={transcript}
+                    startedAt={startedAt}
+                  />
+                </div>
+                <div className="lg:col-span-4">
+                  <SystemOutput
+                    draft={draft}
+                    classification={classification}
+                    routing={routing}
+                    caseId={caseId}
+                    completeness={completeness}
+                    status={status}
+                    onValidateRoute={() => void finalize()}
+                    finalizing={finalizing}
+                  />
+                </div>
+              </div>
+
+              <AuditTrail caseId={caseId} events={audit} />
+            </main>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }
 
-// Help TS narrow the value of NetworkType in dev tools
+// keep type referenced
 export type _ = NetworkType;
