@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import { Radio } from "lucide-react";
 import { Waveform } from "./Waveform";
 import type { TranscriptLine } from "./Transcript";
@@ -12,14 +12,22 @@ interface Props {
   draft: CaseDraft;
 }
 
-export function CallStream({ status, lines, draft }: Props) {
+export const CallStream = memo(function CallStream({ status, lines, draft }: Props) {
   const { hovered } = useTrace();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const traceTerms = useMemo(() => tracePatternsForDraft(draft), [draft]);
+  const traceTerms = useMemo(
+    () => tracePatternsForDraft(draft),
+    [draft.amount_cents, draft.merchant, draft.customer_name, draft.last4, draft.transaction_date, draft.dispute_reason],
+  );
 
   useEffect(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    if (el) {
+      const raf = requestAnimationFrame(() => {
+        el.scrollTop = el.scrollHeight;
+      });
+      return () => cancelAnimationFrame(raf);
+    }
   }, [lines]);
 
   const isLive = status === "live";
@@ -89,7 +97,7 @@ export function CallStream({ status, lines, draft }: Props) {
       </div>
     </section>
   );
-}
+});
 
 function formatTs(iso: string): string {
   const d = new Date(iso);

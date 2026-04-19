@@ -23,11 +23,24 @@ interface ClassifyOut {
 export const classifyTranscript = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => ClassifyInput.parse(input))
   .handler(async ({ data }): Promise<ClassifyOut> => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) {
-      // Soft fallback: keyword classifier so demo still works without AI Gateway.
+    // Support multiple AI providers via env vars.
+    // OPENAI_API_KEY + OPENAI_BASE_URL → any OpenAI-compatible API (OpenAI, OpenRouter, local)
+    // LOVABLE_API_KEY → Lovable AI Gateway (original, kept for backward compat)
+    // No key → keyword-based fallback (works fine for demos)
+    const openaiKey = process.env.OPENAI_API_KEY;
+    const openaiBase = process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1";
+    const openaiModel = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+    const lovableKey = process.env.LOVABLE_API_KEY;
+
+    if (!openaiKey && !lovableKey) {
       return keywordClassify(data.transcript);
     }
+
+    const apiUrl = openaiKey
+      ? `${openaiBase}/chat/completions`
+      : "https://ai.gateway.lovable.dev/v1/chat/completions";
+    const apiKey = openaiKey ?? lovableKey!;
+    const model = openaiKey ? openaiModel : "google/gemini-2.5-flash";
 
     const tools = [
       {
@@ -49,14 +62,14 @@ export const classifyTranscript = createServerFn({ method: "POST" })
     ];
 
     try {
-      const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      const res = await fetch(apiUrl, {
         method: "POST",
         headers: {
           Authorization: `Bearer ${apiKey}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          model: "google/gemini-2.5-flash",
+          model,
           messages: [
             {
               role: "system",

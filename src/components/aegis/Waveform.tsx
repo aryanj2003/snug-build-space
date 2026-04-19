@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 
 interface Props {
   active: boolean;
@@ -9,12 +9,13 @@ interface Props {
  * Cyan industrial waveform. Uses mic input when `active`, otherwise renders
  * an idle shimmer so the canvas isn't empty pre-call.
  */
-export function Waveform({ active, height = 72 }: Props) {
+export const Waveform = memo(function Waveform({ active, height = 72 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef = useRef<number | null>(null);
   const ctxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const lastDrawTimeRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,7 +43,7 @@ export function Waveform({ active, height = 72 }: Props) {
     }
 
     setup();
-    draw();
+    rafRef.current = requestAnimationFrame(draw);
 
     return () => {
       cancelled = true;
@@ -56,7 +57,14 @@ export function Waveform({ active, height = 72 }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active]);
 
-  function draw() {
+  function draw(timestamp: number) {
+    // Frame-skipping: only draw when ≥33ms have elapsed (~30fps)
+    if (timestamp - lastDrawTimeRef.current < 33) {
+      rafRef.current = requestAnimationFrame(draw);
+      return;
+    }
+    lastDrawTimeRef.current = timestamp;
+
     const cvs = canvasRef.current;
     if (!cvs) {
       rafRef.current = requestAnimationFrame(draw);
@@ -90,6 +98,16 @@ export function Waveform({ active, height = 72 }: Props) {
     const data = new Uint8Array(analyser?.frequencyBinCount ?? barCount);
     if (analyser) analyser.getByteFrequencyData(data);
 
+    // Create gradient once for all bars (reused across the loop)
+    const grad = ctx.createLinearGradient(0, 0, 0, H);
+    grad.addColorStop(0, "rgba(34, 211, 238, 0.95)");
+    grad.addColorStop(1, "rgba(34, 211, 238, 0.45)");
+    ctx.fillStyle = grad;
+
+    // Set shadow once before the loop instead of per-bar
+    ctx.shadowColor = "rgba(34, 211, 238, 0.6)";
+    ctx.shadowBlur = 6;
+
     for (let i = 0; i < barCount; i++) {
       let amp: number;
       if (analyser) {
@@ -103,12 +121,6 @@ export function Waveform({ active, height = 72 }: Props) {
       const x = i * barW + barW * 0.15;
       const y = (H - h) / 2;
 
-      const grad = ctx.createLinearGradient(0, y, 0, y + h);
-      grad.addColorStop(0, "rgba(34, 211, 238, 0.95)");
-      grad.addColorStop(1, "rgba(34, 211, 238, 0.45)");
-      ctx.fillStyle = grad;
-      ctx.shadowColor = "rgba(34, 211, 238, 0.6)";
-      ctx.shadowBlur = 6;
       ctx.fillRect(x, y, barW * 0.7, h);
     }
     ctx.shadowBlur = 0;
@@ -122,4 +134,4 @@ export function Waveform({ active, height = 72 }: Props) {
       <div className="scan-line" />
     </div>
   );
-}
+});

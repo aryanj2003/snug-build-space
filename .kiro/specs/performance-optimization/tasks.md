@@ -1,0 +1,27 @@
+# Tasks
+
+- [x] 1. Stabilize clientTools reference and debounce completeness scoring in IntakePage
+  - [x] 1.1 Memoize the `clientTools` object with `useMemo` so `useConversation()` receives a stable reference across re-renders in `src/routes/index.tsx`
+  - [x] 1.2 Debounce the `scoreCompleteness(draft)` call in the `useEffect` with a 300ms delay using `setTimeout`/`clearTimeout` in the effect cleanup in `src/routes/index.tsx`
+  - [x] 1.3 Verify that the `clientTools` memoization dependencies are correct (stable `captureField` and `finalize` callbacks)
+- [x] 2. Wrap child components with React.memo to prevent cascading re-renders
+  - [x] 2.1 Wrap `CallStream` export with `React.memo` in `src/components/aegis/CallStream.tsx`
+  - [x] 2.2 Wrap `EnforcementLedger` export with `React.memo` in `src/components/aegis/EnforcementLedger.tsx`
+  - [x] 2.3 Wrap `SystemOutput` export with `React.memo` in `src/components/aegis/SystemOutput.tsx`
+  - [x] 2.4 Wrap `Waveform` export with `React.memo` in `src/components/aegis/Waveform.tsx`
+- [x] 3. Memoize regex compilation in tracePatternsForDraft
+  - [x] 3.1 In `CallStream.tsx`, replace the `useMemo(() => tracePatternsForDraft(draft), [draft])` with a memo keyed on the specific draft fields used by `tracePatternsForDraft` (`amount_cents`, `merchant`, `customer_name`, `last4`, `transaction_date`, `dispute_reason`) so regex patterns are not recompiled when unrelated draft fields change
+- [x] 4. Throttle Waveform canvas animation to ~30fps
+  - [x] 4.1 Add frame-skipping logic to the `draw()` function in `src/components/aegis/Waveform.tsx` using a timestamp check — only draw when ≥33ms have elapsed since the last frame
+  - [x] 4.2 Move the gradient creation outside the per-bar loop (create once, reuse for all 64 bars) and reduce per-bar `shadowBlur` operations
+- [x] 5. Stabilize ISO-20022 useMemo dependencies in SystemOutput
+  - [x] 5.1 In `SystemOutput.tsx`, create a stable memo key from the specific draft fields that affect `buildIso20022` output instead of using the `draft` object reference directly, so the JSON rebuild and syntax highlighting only recompute when relevant field values actually change
+- [x] 6. Optimize transcript append and scroll behavior in CallStream
+  - [x] 6.1 Replace the synchronous `el.scrollTop = el.scrollHeight` in the scroll `useEffect` with a `requestAnimationFrame` callback to avoid forced layout reflow in `src/components/aegis/CallStream.tsx`
+- [x] 7. Write property-based preservation tests for pure functions
+  - [x] 7.1 [PBT-preservation] Write a property-based test using fast-check that generates random `CaseDraft` objects and verifies `scoreCompleteness()` returns identical `{ score, missing_fields }` results (the function itself is unchanged, this validates the debounce wrapper doesn't alter results)
+  - [x] 7.2 [PBT-preservation] Write a property-based test using fast-check that generates random `CaseDraft` objects and verifies `tracePatternsForDraft()` produces patterns that match the same substrings in sample text (validates memoization doesn't alter pattern behavior)
+  - [x] 7.3 [PBT-preservation] Write a property-based test using fast-check that generates random draft/classification/routing combinations and verifies `buildIso20022()` returns identical JSON output (validates memo key change doesn't alter output)
+- [x] 8. Build verification
+  - [x] 8.1 Run `npm run build` to verify no TypeScript or build errors were introduced
+  - [x] 8.2 Run `npm run test` to verify all existing and new tests pass

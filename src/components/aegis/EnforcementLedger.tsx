@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { CheckCircle2, CircleDashed, Database } from "lucide-react";
 import type { CaseDraft, ClassifyResult, CompletenessResult } from "@/lib/aegis/types";
@@ -31,7 +31,7 @@ const REASON_LABEL: Record<string, string> = {
   other: "Other",
 };
 
-export function EnforcementLedger({ draft, classification, completeness, transcript, startedAt }: Props) {
+export const EnforcementLedger = memo(function EnforcementLedger({ draft, classification, completeness, transcript, startedAt }: Props) {
   const { setHovered } = useTrace();
   const callerRows: Row[] = useMemo(() => {
     return [
@@ -42,7 +42,7 @@ export function EnforcementLedger({ draft, classification, completeness, transcr
         source: "CALLER",
         value:
           typeof draft.amount_cents === "number"
-            ? `$${(draft.amount_cents / 100).toFixed(2)} ${draft.currency ?? "USD"}`
+            ? `${(draft.amount_cents / 100).toFixed(2)} ${draft.currency ?? "USD"}`
             : null,
       },
       {
@@ -105,7 +105,7 @@ export function EnforcementLedger({ draft, classification, completeness, transcr
 
   const rows = useMemo(() => [...callerRows, ...accountRows], [callerRows, accountRows]);
 
-  const confidence = classification?.confidence ?? draft.classification_confidence ?? 0.94;
+  const confidence = classification?.confidence ?? draft.classification_confidence ?? 0;
 
   // Citation timestamps from transcript: pick first line that mentions any captured value
   const citation = (row: Row): string | null => {
@@ -168,11 +168,18 @@ export function EnforcementLedger({ draft, classification, completeness, transcr
       </div>
 
       <div className="border-t border-border/60 p-4">
-        <ConfidenceGauge value={confidence} missing={completeness?.missing_fields.length ?? 0} />
+        <ConfidenceGauge
+          value={confidence}
+          missing={completeness?.missing_fields.length ?? 0}
+          classification={classification}
+          completeness={completeness}
+          filledCount={rows.filter((r) => r.value).length}
+          totalCount={rows.length}
+        />
       </div>
     </section>
   );
-}
+});
 
 function SectionRow({ label }: { label: string }) {
   return (
@@ -255,7 +262,21 @@ function LedgerRow({
   );
 }
 
-function ConfidenceGauge({ value, missing }: { value: number; missing: number }) {
+function ConfidenceGauge({
+  value,
+  missing,
+  classification,
+  completeness,
+  filledCount,
+  totalCount,
+}: {
+  value: number;
+  missing: number;
+  classification: ClassifyResult | null;
+  completeness: CompletenessResult | null;
+  filledCount: number;
+  totalCount: number;
+}) {
   const pct = Math.max(0, Math.min(1, value));
   const r = 52;
   const c = 2 * Math.PI * r;
@@ -298,9 +319,33 @@ function ConfidenceGauge({ value, missing }: { value: number; missing: number })
       </div>
       <div className="flex-1 space-y-1.5 font-mono text-[11px]">
         <Stat label="Schema" value="ISO-20022" tone="primary" />
-        <Stat label="Validations" value="4/4 passed" tone="success" />
+        <Stat
+          label="Validations"
+          value={filledCount === 0 && totalCount === 0 ? "—" : filledCount === 0 && !classification && !completeness ? "—" : `${filledCount}/${totalCount} passed`}
+          tone={filledCount === totalCount && filledCount > 0 ? "success" : filledCount === 0 && !classification && !completeness ? "primary" : "warn"}
+        />
         <Stat label="Missing fields" value={missing === 0 ? "none" : String(missing)} tone={missing === 0 ? "success" : "warn"} />
-        <Stat label="Risk band" value="LOW" tone="success" />
+        <Stat
+          label="Risk band"
+          value={
+            classification == null
+              ? "—"
+              : classification.confidence >= 0.8
+                ? "LOW"
+                : classification.confidence >= 0.5
+                  ? "MEDIUM"
+                  : "HIGH"
+          }
+          tone={
+            classification == null
+              ? "primary"
+              : classification.confidence >= 0.8
+                ? "success"
+                : classification.confidence >= 0.5
+                  ? "warn"
+                  : "warn"
+          }
+        />
       </div>
     </div>
   );

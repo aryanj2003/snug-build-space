@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useConversation, ConversationProvider } from "@elevenlabs/react";
 import { toast } from "sonner";
@@ -153,6 +153,7 @@ function IntakePage() {
   const draftRef = useRef<CaseDraft>({});
   const transcriptTextRef = useRef<string>("");
   const finalizingRef = useRef<boolean>(false);
+  const endSessionRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -286,8 +287,11 @@ function IntakePage() {
     }
   }, [captureField]);
 
-  const conversation = useConversation({
-    clientTools: {
+  // Task 1.1 / 1.3: Memoize clientTools so useConversation receives a stable
+  // reference across re-renders. Dependencies are captureField and finalize,
+  // both already wrapped in useCallback with stable deps.
+  const clientTools = useMemo(
+    () => ({
       capture_field: (params: { field: string; value: unknown }) => {
         const field = String(params?.field ?? "").trim();
         if (!CAPTURE_FIELD_SET.has(field)) return "unknown_field";
@@ -309,10 +313,19 @@ function IntakePage() {
       },
       finalize_intake: () => {
         if (finalizingRef.current) return "already_finalizing";
+        // Terminate voice session if live
+        if (endSessionRef.current) {
+          try { endSessionRef.current(); } catch (_) { /* ignore */ }
+        }
         void finalize();
         return "finalizing";
       },
-    },
+    }),
+    [captureField, finalize],
+  );
+
+  const conversation = useConversation({
+    clientTools,
     onConnect: () => {
       setStatus("live");
       setStartedAt(Date.now());
@@ -334,6 +347,9 @@ function IntakePage() {
       setStatus((s) => (s === "live" ? "ended" : s));
     },
   });
+
+  // Keep endSessionRef in sync so finalize_intake can terminate the voice stream
+  endSessionRef.current = conversation.endSession;
 
   const startVoice = useCallback(async () => {
     if (!hasCredentials || !agentId) {
@@ -414,8 +430,14 @@ function IntakePage() {
 
   useEffect(() => () => cancelSim(), []);
 
+  // Task 1.2: Debounce completeness scoring with 300ms delay so rapid
+  // field captures don't trigger synchronous scoring on every draft change.
   useEffect(() => {
-    if (status === "live") setCompleteness(scoreCompleteness(draft));
+    if (status !== "live") return;
+    const timer = setTimeout(() => {
+      setCompleteness(scoreCompleteness(draft));
+    }, 300);
+    return () => clearTimeout(timer);
   }, [draft, status]);
 
   return (
